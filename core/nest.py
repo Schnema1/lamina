@@ -22,7 +22,7 @@ from scipy.ndimage import binary_erosion, distance_transform_edt
 from shapely.geometry import LineString, Point, box
 from shapely.ops import split
 from shapely.strtree import STRtree
-from .geometry import as_multi
+from .geometry import as_multi, label_spot
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -247,7 +247,7 @@ def _rect_nest(prepared, sheet, gap, margin):
     return [sheets[k] for k in sorted(sheets)]
 
 
-def nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag=""):
+def nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag="", label_inside=False):
     """Sets piece.place, .kerfed, .placed(+lines, marks), .label_pos, .leader. Returns sheet count.
 
     One sheet is one stock thickness. A part whose thickness was changed is cut from another piece of material, so
@@ -256,18 +256,18 @@ def nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag=""):
     for pc in pieces:
         by_thick.setdefault(round(pc.parent.thickness, 6), []).append(pc)
     if len(by_thick) < 2:
-        return _nest(pieces, sheet, gap, margin, kerf, label_h, font, tag)
+        return _nest(pieces, sheet, gap, margin, kerf, label_h, font, tag, label_inside)
     n = 0
     for t in sorted(by_thick):
         group = by_thick[t]
-        used = _nest(group, sheet, gap, margin, kerf, label_h, font, tag)
+        used = _nest(group, sheet, gap, margin, kerf, label_h, font, tag, label_inside)
         for pc in group:
             pc.place = (pc.place[0] + n, *pc.place[1:])      # each group numbered after the ones before it
         n += used
     return n
 
 
-def _nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag=""):
+def _nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag="", label_inside=False):
     W, H = sheet
     k = kerf / 2; half = gap / 2
     prepared = []
@@ -279,7 +279,7 @@ def _nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag=""):
         sheets = _rect_nest(prepared, sheet, gap, margin)
         if label_h:
             for sh in sheets:
-                place_labels(sh, font, tag)
+                place_labels(sh, font, tag, label_inside)
         return max(1, len(sheets))
     order = sorted(range(len(prepared)), key=lambda i: -prepared[i][0].kerfed.area)
     sheets = [Sheet(W, H, margin)]
@@ -334,16 +334,24 @@ def _nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag=""):
         sh.add(affinity.translate(affinity.rotate(grown, rot0 + r, origin=(0, 0)), x, y), pc, [p + (x, y) for p in turned[r]])
     if label_h:
         for sh in sheets:
-            place_labels(sh, font, tag)
+            place_labels(sh, font, tag, label_inside)
     return len(sheets)
 
 
-def place_labels(sh, font, tag=""):
-    """Each label in free space next to its part: try above, right, below, left at growing distances; leader to the outline."""
+def place_labels(sh, font, tag="", inside=False):
+    """Every part's label, either beside the part in free space with a leader to its outline, or — `inside` — engraved
+    on the part itself. A label placed inside sits within the next layer's outline where the piece carries one (the
+    stacked "engrave next layer" guide), so the layer glued on top hides it; a label too big for a small part is still
+    placed, on the part's widest spot and past its outline if it must, for the maker to trim in the laser software —
+    the one thing that never happens is a part coming out with no label at all."""
     tree = STRtree(sh.placed)
     taken = []
     for pc in sh.pieces:
         w = max(6.0, 0.62 * font * (len(pc.label) + (len(tag) + 1 if tag else 0)) + 2); h = font * 1.4   # `tag`: the model name engraved first
+        if inside:
+            pc.label_pos = inside_spot(pc, w, h)               # engraved on the part: no leader line to it
+            pc.leader = None
+            continue
         x0, y0, x1, y1 = pc.placed.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         spots = []
         for d in (1.0, 4.0, 8.0, 14.0, 22.0):
@@ -367,3 +375,23 @@ def place_labels(sh, font, tag=""):
         q = near.interpolate(near.project(anchor))
         pc.label_pos = (lx, ly, rot)
         pc.leader = ((lx, ly), (q.x, q.y))
+
+
+def inside_spot(pc, w, h):
+    """Where to engrave a w × h label on a placed part: inside the next layer's outline when the piece carries one
+    (the stacked guide), so the layer glued on top hides it, otherwise on the part's own widest spot. The next layer's
+    footprint is rebuilt from the piece's guide lines — the ring they enclose — and only used if the label fits inside
+    it. A label that fits nowhere is still given the part's widest clearance rather than left off, so the maker trims
+    it in the laser software instead of finding a part they cannot place."""
+    region = as_multi(pc.placed)
+    if region.is_empty:
+        return (0.0, 0.0, 0)
+    cover = None
+    guides = [ln for s, ln in pc.placed_lines if s == "guide"]
+    if guides:
+        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
+        if loops:
+            under = shapely.union_all(loops).intersection(region)
+            if not under.is_empty:
+                cover = under
+    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part

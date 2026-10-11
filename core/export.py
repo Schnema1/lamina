@@ -12,9 +12,10 @@ from __future__ import annotations
 import argparse, html, json, pathlib
 import ezdxf
 import numpy as np
+import shapely
 from ezdxf import units as dxfunits
-from shapely.geometry import box
-from .geometry import as_multi, poly_coords
+from shapely.geometry import Polygon, box
+from .geometry import as_multi, label_spot, poly_coords
 
 COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
@@ -110,16 +111,31 @@ def identical_groups(plan):
             for sl in plan["slices"] for pc in sl["pieces"] if pc["label"] not in copies]
 
 
-def item_for_piece(pc, note="", pad=1.0, names=None, tag=""):
-    """Piece alone at the origin (kerf applied, no sheet placement): cuts and label only."""
+def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
+    """Piece alone at the origin (kerf applied, no sheet placement): cuts and label only. With `inside`, the label is
+    engraved on the part itself — at its widest spot, since a lone part carries no next-layer guide — and the drawing
+    is grown so a label too big for a small part still comes out whole for the maker to trim."""
     it = Item(pc, "kerfed", note, names, tag)
     xs = [x for _, r in it.rings for x, _ in r]; ys = [y for _, r in it.rings for _, y in r]
     x0, y0 = min(xs) - pad, min(ys) - pad
     it.rings = [(l, [(x - x0, y - y0) for x, y in r]) for l, r in it.rings]
     it.scores, it.marks = [], []
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
-    it.label_pos = (w / 2, h + 3, 0); it.leader = None
-    return it, w, h + 6
+    it.leader = None
+    if not inside:
+        it.label_pos = (w / 2, h + 3, 0)                 # above the part, as the single-part files always did
+        return it, w, h + 6
+    lw = max(6.0, 0.62 * font * len(it.label) + 2); lh = font * 1.4     # the label's own extent, sized as place_labels does
+    regs = [Polygon([(px - x0, py - y0) for px, py in r[0]], [[(px - x0, py - y0) for px, py in hole] for hole in r[1:]])
+            for r in pc["kerfed"]]
+    x, y, rot = label_spot(shapely.union_all(regs), lw, lh)
+    bw, bh = (lw, lh) if rot == 0 else (lh, lw)
+    dx, dy = min(0.0, x - bw / 2 - 1), min(0.0, y - bh / 2 - 1)     # a label overrunning left/top moves the whole drawing
+    if dx or dy:
+        it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
+        x -= dx; y -= dy; w -= dx; h -= dy
+    it.label_pos = (x, y, rot)
+    return it, max(w, x + bw / 2 + 1), max(h, y + bh / 2 + 1)       # grow the sheet of paper so nothing is clipped
 
 
 DASH = {"solid": "", "dashed": "1.5,1", "dotted": "0.4,0.8"}
@@ -359,6 +375,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
     out_dir = pathlib.Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     font = font or plan["params"].get("font", 4.0); units = units or plan["params"].get("units", "mm")
     names = plan.get("codes") or {}                 # puzzle mode: engraved codes instead of positions
+    inside = bool(plan["params"].get("label_inside"))   # labels engraved on the parts, not beside them
     design = design_name(plan)                      # before every file name: two designs' files never mix
     written = []
 
@@ -390,7 +407,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             stem = names.get(pc["label"], pc["label"]) + mat_tag(plan) + thick_tag(plan, t) + f" x{n}"
             # the drawing carries the count and how many of them are turned over; the cut list names which ones
             it, w, h = item_for_piece(pc, " ".join(x for x in ([f"×{n}"] if n > 1 else []) + [f"({len(flips)} turned over)" if flips else "", note] if x), names=names,
-                                      tag=plan.get("label_tag", ""))
+                                      tag=plan.get("label_tag", ""), inside=inside, font=font)
             write(stem, [it], w, h, False)
             also = "also " + ", ".join(names.get(l, l) for l in labels[1:]) if n > 1 else note
             rows.append((f"{design} {stem}", n, size_of(it), "; ".join(x for x in [also, "turn over " + ", ".join(names.get(l, l) for l in flips) if flips else ""] if x)))
