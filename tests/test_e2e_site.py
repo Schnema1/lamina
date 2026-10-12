@@ -42,9 +42,8 @@ def test_the_site_slices_in_the_browser(site):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(site + "/app/")
 
-        def sliced(what):                                    # the status line ends "ready · …" or "error: …"
-            page.wait_for_timeout(700)                       # long enough for the click to have flipped it to "slicing…"
-            page.wait_for_function("() => /^(ready|error)/.test(document.getElementById('status').textContent)", timeout=300_000)
+        def sliced(what):                                    # nothing scheduled or running, the status "ready · …" or "error: …"
+            page.wait_for_function("() => window.__t?.idle() && /^(ready|error)/.test(document.getElementById('status').textContent)", timeout=300_000)
             status = page.text_content("#status")
             assert status.startswith("ready"), (what, status)
             return status
