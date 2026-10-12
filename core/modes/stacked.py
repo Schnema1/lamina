@@ -8,7 +8,7 @@ from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
 from . import Mode, Param, register
 from ..model import Slice
-from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, rect_along, as_multi, section_polygons, frame_xy, to_local
+from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, rect_along, as_multi, as_lines, section_polygons, frame_xy, to_local
 
 CONNECT_HELP = ("dowel = round/square rods through holes (drawn in the 3D view), the default: glue alone leaves every layer free to "
                 "slide while it dries, and two dowels through a piece hold it where it belongs · tab = flat pieces cut from the sheet: "
@@ -30,6 +30,8 @@ class Stacked(Mode):
         Param("count", "int", 10, "Number of slices", 1, 500, 1, show_if=("distribution", "count")),
         Param("space", "number", 0.0, "Empty space between consecutive slices (mm); spacers keep it", 0, 500, 0.5, unit="mm"),
         Param("surface", "choice", "mid", "Outline of each slice: mid = section at the middle; outer = union of the sections through the slice thickness (sand down to shape, Slicer's 3D Slices); inner = intersection (never protrudes)", choices=["mid", "outer", "inner"]),
+        Param("next_outline", "bool", False, "Engrave the outline of the next layer onto each slice (GUIDE, orange): a light line showing where the layer stacked on top sits, so the stack lines up as it is glued. Drawn only where it lands on the slice's own material — a wider layer above stops at this layer's edge. Engrave, not cut; off by default", label="engrave next layer's outline"),
+        Param("next_outline_offset", "number", 0.0, "Move the engraved outline in (−) or out (+) from the next layer's true edge (mm). A little negative — −0.25 or so — tucks the line under the layer above, so a glue-up a hair off still hides it; positive marks an overhang where the next layer is wider", -5, 5, 0.05, unit="mm", show_if=("next_outline", True), label="outline offset"),
         Param("connect", "choice", "dowel", CONNECT_HELP, choices=["none", "dowel", "tab"]),
         Param("dowel_d", "number", 6.0, "Dowel diameter / peg & spacer width (mm)", 0.5, 100, 0.5, unit="mm", show_if=("connect", ["dowel", "tab"])),
         Param("dowel_shape", "choice", "round", "Dowel hole shape (round, square, pencil = hexagon, cross, horizontal / vertical slot)", choices=["round", "square", "pencil", "cross", "hslot", "vslot"], show_if=("connect", "dowel")),
@@ -68,8 +70,12 @@ class Stacked(Mode):
         if p["space"] > 0 and p["connect"] == "none":
             ctx.errors.append(f"space = {p['space']:g} mm between slices but no connectors — the slices would float: set connect to tab (spacers) or dowel, or set space to 0")
         if p["connect"] == "none" or len(slices) < 2:
+            if p["next_outline"] and len(slices) > 1:
+                self.guide_outlines(ctx, slices)
             return slices
         extra = self.connect(ctx, slices)
+        if p["next_outline"] and len(slices) > 1:
+            self.guide_outlines(ctx, slices)
         # assembly order: a slice, then the connectors that sit on it, then the next slice …
         by_pair = {}
         for sl in extra:
@@ -91,6 +97,38 @@ class Stacked(Mode):
             for s in secs[1:]:
                 g = g.intersection(s) if ctx.p["surface"] == "inner" else unary_union([g, s])
             sl.raw = as_multi(g)
+
+    def guide_outlines(self, ctx, slices):
+        """Engrave each layer's outline onto the layer under it (GUIDE): the line to line the stack up by, so a layer
+        that has to sit a certain way is marked on the layer it rests on. The neighbour's section is mapped into this
+        slice's own frame — stacked slices are parallel, so that is a plain 2D transform — and only the part of its
+        silhouette that lands on this slice's material is kept: a line can be engraved only where there is material to
+        burn it into, so the overhang of a wider layer above stops at this layer's edge. Kept as `lines` with the style
+        "guide", which the export draws on its own GUIDE layer (engrave, not cut or score)."""
+        off = ctx.p["next_outline_offset"]
+        for a, b in zip(slices, slices[1:]):
+            A = np.linalg.inv(a.M) @ b.M                      # b's local xy → a's local xy
+            tf = [A[0, 0], A[0, 1], A[1, 0], A[1, 1], A[0, 3], A[1, 3]]
+            clip = as_multi(a.raw.difference(unary_union(a.cuts))) if a.cuts else a.raw   # slots/dowels leave no material to engrave
+            if clip.is_empty:
+                continue
+            for poly in as_multi(b.raw).geoms:
+                placed = shapely.affinity.affine_transform(poly, tf)
+                # The guide sits on the next layer's true edge; a negative `next_outline_offset` pulls it in, so the
+                # layer above still covers the line when the glue-up is a hair off. Mitred, not rounded, so a square
+                # stays a square where the outline follows the part's corners.
+                if off:
+                    placed = placed.buffer(off, join_style=2)
+                    if placed.is_empty:
+                        continue
+                for part in as_multi(placed).geoms:
+                    # A neighbour the same shape lies exactly on this slice's outline, and a line that hugs a polygon
+                    # boundary comes back from GEOS cut at every vertex — one path per point, hundreds of them. Merging
+                    # the pieces back into whole lines keeps the guide one line per ring.
+                    merged = shapely.line_merge(as_lines(part.exterior.intersection(clip)))
+                    for ln in as_lines(merged).geoms:
+                        if ln.length > 1e-6:
+                            a.lines.append(("guide", ln))
 
     # ---------------------------------------------------------------- connectors
     def spread(self, region, n, apart=0.0, clear=(), by=0.0):
