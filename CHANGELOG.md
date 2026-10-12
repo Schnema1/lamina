@@ -12,6 +12,11 @@ What changed in each release. The GitHub release for a version is this section, 
   line a little inward, so the layer above hides it even when the glue-up is a hair off. The line is drawn only where
   there is material under it, never over a slot or a dowel hole, and slices that are the same part with the same line
   are still cut once with a quantity. Thanks to @Schnema1.
+- **Labels on the parts themselves.** A new sheet option engraves each part's label on the part instead of beside it
+  with a leader line. On a stacked model with the next layer's outline engraved, the label goes inside that outline,
+  so the layer glued on top hides it; otherwise it sits where the part is widest. A label too big for a small part is
+  still placed, running past the edge if it must, for you to trim in your laser software: no part comes out without
+  its name. The one-file-per-part export grows its drawing so such a label is not cut off. Thanks to @Schnema1.
 
 ### Changed
 
