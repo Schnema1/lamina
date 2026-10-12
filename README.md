@@ -246,7 +246,7 @@ The original's six techniques as five modes: its *3D Slices* is stacked with `su
 
 | mode | what you get | parts |
 |---|---|---|
-| `stacked` | parallel sections, touching or with an empty `space`; outline `mid` / `outer` (Slicer's 3D Slices: sand down to shape) / `inner`; connected by **dowels** (6 hole shapes), flat **pegs**, or tabbed **spacers** that keep the space; points aligned, random per pair, or along your 3D lines | `Z-n`, connectors `P-n` |
+| `stacked` | parallel sections, touching or with an empty `space`; outline `mid` / `outer` (Slicer's 3D Slices: sand down to shape) / `inner`; connected by **dowels** (6 hole shapes), flat **pegs**, or tabbed **spacers** that keep the space; points aligned, random per pair, or along your 3D lines; `next_outline` engraves the outline of the layer above on each slice (GUIDE layer), a guide to glue the stack by, with an offset to tuck it under the layer above | `Z-n`, connectors `P-n` |
 | `interlocked` | two slotted families, egg-crate; notch ratio / flare / relief; grid rotation; extra slices at chosen positions | `X-n`, `Y-n` |
 | `radial` | half-slices around an axis (move it with `center`, turn the fan with `angle`) locked by horizontal ring slices with radial slots; ring count or spacing. **Several axes**: a fan per lobe — an axis through each of a dumbbell's balls, one per ball of a snowman, tilted to follow it. Neighbouring lobes are parted by a flat plane between their axes — a translucent part in the 3D view that you click and move or tilt like any slice — so the fans never run into each other, and a **spine** — one full plane through every axis, cut whole and slotted into every ring — ties the lobes together: automatic, found from how the axes lie (on one line, any number; on one plane, exactly one; on no plane, an error naming the fix). Every axis is drawn in the 3D view where it passes through the model: drag it whole or by either end (it stays on the plane the other axes share, so the spine survives the drag), alt-click the model for a parallel axis through that point, `+` to split one in two, alt-click an axis to remove it | `R-na/b` (`R2-na/b` per axis), rings `Z-n`, spines `SP-n` |
 | `curve` | ribs perpendicular to a curve through the model (its centre line by default, following the body across the plane too; drag the blue dots, alt-click to add or remove one, or type them in the `curve` table), so they follow a bend instead of staying parallel; locked together by spine slices. The turn between neighbouring ribs is limited so they do not meet inside the model. **Branches**: a straight line per leg, arm or tail, each with ribs square to it and a spine of its own that reaches back into the body and slots into the body's ribs, so a horse's legs are held instead of cut across by body ribs. Shift+alt-click a hoof to add one, drag its ends, alt-click it to remove it; a branch that starts past the body's ribs is an error, not a loose leg | `R-n`, spines `K-n`; branch 2: ribs `R2-n`, spine `K2`, joint `J-2` |
@@ -285,7 +285,10 @@ does not slip through. It carries the most signal for stacked and folded work; d
 - **One sheet** ignores the sheet height: every part goes on one strip as wide as the sheet and as long as it needs,
   to be cut apart at the machine.
 - **Labels** are engraved beside the part with a leader line wherever there is room; only a fully crowded sheet puts
-  one on the part.
+  one on the part. `label_inside` puts every label on the part itself instead: inside the next layer's outline where
+  the technique marks one (stacked, `next_outline`), so the layer glued on top hides it, otherwise at the part's widest
+  spot. A label too big for a small part is still placed, past the outline if it must, for you to trim in the laser
+  software; no part ever comes out unlabelled.
 - **An assembly key** comes with the cut files (`assembly-key.txt`): what this technique's labels mean — `R-2a` is the
   *a* half of the second radial plane, `Z-3` the third ring up — then every part with its centre, what it slots onto,
   in the order the 3D view builds them. The same legend is shown in the Export tab, so the scheme is clear before the
@@ -298,8 +301,8 @@ does not slip through. It carries the most signal for stacked and folded work; d
   nothing uploaded, nothing rendered twice.
 - **Cut files**: SVG (opens directly in LightBurn, the Glowforge app and xTool Creative Space) and DXF in mm / cm /
   in, multi-page PDF, EPS per sheet, or one file per piece, each with or without the red label layer (one switch for
-  every file). Layers follow Slicer's Cut Layout: OUTER blue, INNER green (slots, holes), SCORE yellow (folds: solid mountain, dashed valley, dotted perforate), LABEL red (labels, leaders,
-  seam numbers, sheet border). The zip is named `<project or model>_v<revision>_<technique>_…`, and so is every file
+  every file). Layers follow Slicer's Cut Layout: OUTER blue, INNER green (slots, holes), SCORE yellow (folds: solid mountain, dashed valley, dotted perforate), GUIDE orange (stacked: the
+  next layer's outline engraved on the slice under it, when `next_outline` is on), LABEL red (labels, leaders, seam numbers, sheet border). The zip is named `<project or model>_v<revision>_<technique>_…`, and so is every file
   in it: they all start with the design, `egg_v1.0 sheet1 plywood.svg`, so the cut files of two designs unzipped
   into one folder never collide or mix.
 - **Identical pieces once**: in per-piece mode a shape that occurs several times is exported one time, with the
@@ -484,7 +487,15 @@ it writes to is one constant at the top of that file; a fork changes that line.
 
 Issues and pull requests are welcome. A new construction technique is one file in `core/modes/`; checks, nesting
 and export come for free. Run the tests above before opening a pull request, and say which example and settings
-you checked the change on.
+you checked the change on. A merged pull request is credited to you in the release notes of the version it ships
+in, and in the list below.
+
+## Thanks
+
+People whose pull requests are part of Lamina:
+
+- [@Schnema1](https://github.com/Schnema1) — the next layer's outline engraved on each stacked slice, labels
+  engraved on the parts themselves, and the wider steps slider with its counter.
 
 ## Support
 

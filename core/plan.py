@@ -7,7 +7,7 @@ import argparse, json, math, os, pathlib, shutil, threading, time
 import numpy as np
 import trimesh
 from shapely import affinity
-from shapely.geometry import MultiPolygon
+from shapely.geometry import MultiPolygon, MultiLineString
 from shapely.ops import unary_union
 from .modes import load_all, Ctx
 from .geometry import section_polygons, as_multi, poly_coords, line_coords
@@ -355,38 +355,51 @@ def square_up(mesh, rot):
     return [round(float(np.degrees(a)), 1) + 0.0 for a in trimesh.transformations.euler_from_matrix(R4, "sxyz")], off
 
 
-def _match(c, g, tol, mirror):
+def _match(c, g, tol, mirror, cl, gl):
     """How outline `g` fits outline `c` (both at the origin, long side along x): "same" under some quarter turn,
-    "flipped" when it only fits as its mirror image, None when it does not fit at all."""
+    "flipped" when it only fits as its mirror image, None when it does not fit at all. The guide lines engraved on
+    them (`cl`, `gl`, in the same frames) have to coincide under that same move: two slices with the same outline
+    but another layer's outline marked on them are two parts."""
     if abs(c.area - g.area) > tol * c.area:
         return None
-    tries = (("same", g), ("flipped", affinity.scale(g, -1, 1, origin=(0, 0)))) if mirror else (("same", g),)
-    for kind, m in tries:
+    for kind, sx in (("same", 1), ("flipped", -1)) if mirror else (("same", 1),):
         for r in (0, 90, 180, 270):
-            h = affinity.rotate(m, r, origin=(0, 0)); x0, y0, _, _ = h.bounds
-            if c.symmetric_difference(affinity.translate(h, -x0, -y0)).area <= tol * c.area:
+            h = affinity.rotate(affinity.scale(g, sx, 1, origin=(0, 0)), r, origin=(0, 0)); x0, y0, _, _ = h.bounds
+            if c.symmetric_difference(affinity.translate(h, -x0, -y0)).area > tol * c.area:
+                continue
+            hl = affinity.translate(affinity.rotate(affinity.scale(gl, sx, 1, origin=(0, 0)), r, origin=(0, 0)), -x0, -y0)
+            if _coincide(cl, hl):
                 return kind
     return None
+
+
+def _coincide(a, b, w=0.05):
+    """Line sets `a` and `b` are the same lines: each within `w` mm of the other, well under a kerf and over any drift."""
+    if a.is_empty or b.is_empty:
+        return a.is_empty and b.is_empty
+    return a.buffer(w).covers(b) and b.buffer(w).covers(a)
 
 
 def mark_identical(pieces, mirror=False, tol=1e-3):
     """Pieces with the same cut outline — kerf applied, any quarter turn, and with `mirror` also turned over — are one
     part in several copies: the first of each set keeps the others' labels in `same`, the ones that have to be turned
-    over in `flipped`, so they are cut once with a quantity and listed once."""
-    groups = []                                     # [(first piece, its outline at the origin)]
+    over in `flipped`, so they are cut once with a quantity and listed once. A guide line engraved on a piece (stacked,
+    `next_outline`) is part of what the piece is and has to match too; fold lines keep every folded panel a part of its own."""
+    groups = []                                     # [(first piece, its outline at the origin, its guide lines there)]
     for pc in pieces:
-        if pc.lines:                                # score lines (folded panels): each fold pattern is its own part
+        if any(s != "guide" for s, _ in pc.lines):  # score lines (folded panels): each fold pattern is its own part
             continue
-        g = affinity.rotate(pc.kerfed, _min_rect_angle(pc.kerfed), origin=(0, 0))
-        x0, y0, _, _ = g.bounds; g = affinity.translate(g, -x0, -y0)
-        for first, c in groups:
+        a = _min_rect_angle(pc.kerfed)
+        g = affinity.rotate(pc.kerfed, a, origin=(0, 0)); x0, y0, _, _ = g.bounds; g = affinity.translate(g, -x0, -y0)
+        gl = affinity.translate(affinity.rotate(MultiLineString([ln for _, ln in pc.lines]), a, origin=(0, 0)), -x0, -y0)
+        for first, c, cl in groups:
             # same outline but cut from other stock is not the same part: it belongs on the other thickness's sheet
-            kind = _match(c, g, tol, mirror) if first.parent.thickness == pc.parent.thickness else None
+            kind = _match(c, g, tol, mirror, cl, gl) if first.parent.thickness == pc.parent.thickness else None
             if kind:
                 (first.same if kind == "same" else first.flipped).append(pc.label)
                 break
         else:
-            groups.append((pc, g))
+            groups.append((pc, g, gl))
 
 
 def shed_slivers(raw, prof, cuts, mf, mp):
@@ -523,7 +536,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
     pieces = [pc for sl in slices for pc in sl.pieces]
     kerf = p["kerf"] if p["compensate"] else 0.0       # off by default: many machines compensate their own kerf
     tag = label_tag(p, model_path)                     # the model's name, engraved before every label: nested with room for it
-    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["font"] * 1.6 if p["labels"] else 0, p["font"], tag)
+    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["font"] * 1.6 if p["labels"] else 0, p["font"], tag, p["label_inside"])
     mark_identical(pieces, p["mirror_ok"])             # which parts are the same part: one cut file, one row, a quantity
     # puzzle mode: what gets engraved is a code with no order in it. The plan keeps the real labels — the app, the
     # checks and the 3D view are the "plans" you consult when you give up — and the export carries the key.

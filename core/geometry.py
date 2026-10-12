@@ -2,8 +2,9 @@
 from __future__ import annotations
 import functools, math
 import numpy as np
+import shapely
 import trimesh
-from shapely.geometry import Polygon, MultiPolygon, Point, LineString, MultiLineString
+from shapely.geometry import Polygon, MultiPolygon, Point, LineString, MultiLineString, box
 from shapely.ops import unary_union
 
 try:
@@ -135,6 +136,34 @@ def as_lines(g) -> MultiLineString:
     if isinstance(g, MultiLineString):
         return g
     return MultiLineString([l for l in getattr(g, "geoms", []) if isinstance(l, LineString)])
+
+
+def label_spot(mp, w, h, prefer=None):
+    """Where to put a w × h label on a part: the centre of a block that lies inside `prefer` (when given) or `mp` —
+    tried upright and turned 90° — or, when no whole block fits, the widest spot there is, so a label is never left
+    off. Returns (x, y, rotation in degrees). Shared by the sheet placement and the per-piece export so both put a
+    label in the same place."""
+    for cand in (prefer, mp):
+        if cand is None or cand.is_empty:
+            continue
+        spot = _fits_block(cand, w, h)
+        if spot:
+            return spot
+    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in as_multi(mp).geoms), key=lambda c: c.length, default=None)
+    p = best.coords[0] if best is not None else as_multi(mp).representative_point().coords[0]
+    return (float(p[0]), float(p[1]), 0)
+
+
+def _fits_block(mp, w, h):
+    """Centre and rotation of a w × h block lying inside `mp`, or None. The largest inscribed circle's centre is where
+    a block has the most clearance, so it is tried first; holes are respected, since `covers` sees them."""
+    for g in sorted(as_multi(mp).geoms, key=lambda p: -p.area):
+        px, py = shapely.maximum_inscribed_circle(g, 0.5).coords[0]
+        for rot in (0, 90):
+            bw, bh = (w, h) if rot == 0 else (h, w)
+            if g.covers(box(px - bw / 2, py - bh / 2, px + bw / 2, py + bh / 2)):
+                return (float(px), float(py), rot)
+    return None
 
 
 def line_segments_in_mesh(mesh, p0, d, span) -> list[tuple[float, float]]:

@@ -48,6 +48,27 @@ def test_svg_layers_and_entity_counts_stacked(tmp_path):
     assert not tree.xpath('//svg:g[@id="SCORE"]', namespaces=SVG_NS)
 
 
+def test_next_layer_outline_goes_on_the_guide_layer_and_identical_slices_stay_one_part(tmp_path):
+    """Stacked with `next_outline`: every slice but the top one carries the outline of the layer above it as a guide
+    line, exported on a GUIDE layer of its own (engraved), one path per line in the plan, and no SCORE layer. Slices
+    that are the same part with the same guide are still cut once: the cube's lower three slabs each carry the square
+    above them (one file, quantity 3); the top slab, with nothing above it, is a part of its own."""
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 4, "autofix": "off", "next_outline": True})
+    pieces = [pc for sl in plan["slices"] for pc in sl["pieces"]]
+    styles = [s for pc in pieces for s, _ in pc["lines"]]
+    assert styles and set(styles) == {"guide"}
+    assert sum(1 for pc in pieces if not pc["lines"]) == 1          # the top slice has no layer above it
+
+    export(plan, tmp_path, fmts=("svg",), labels=True)
+    tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))
+    assert not tree.xpath('//svg:g[@id="SCORE"]', namespaces=SVG_NS)
+    guide_g = tree.xpath('//svg:g[@id="GUIDE"]', namespaces=SVG_NS)[0]
+    assert len(guide_g.xpath('.//svg:path', namespaces=SVG_NS)) == sum(len(pc["lines"]) for pc in pieces if pc["place"][0] == 0)
+
+    files = {f.name.split(" ", 1)[1] for f in export(plan, tmp_path / "pieces", fmts=("svg",), labels=True, per_piece=True)}
+    assert "Z-1 x3.svg" in files and "Z-4 x1.svg" in files, files
+
+
 def test_svg_score_and_label_counts_folded(tmp_path):
     plan = build(EXAMPLES / "cube.stl", "folded", {"facet": 0, "joint": "laced", "autofix": "off"})
     export(plan, tmp_path, fmts=("svg",), labels=True)

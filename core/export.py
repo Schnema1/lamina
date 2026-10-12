@@ -6,19 +6,21 @@ Layers / colours follow Slicer's Cut Layout convention:
   OUTER   blue    #0055ff   outer silhouette of each part
   INNER   green   #00aa00   interior cuts (slots, holes)
   SCORE   yellow  #d4a800   fold lines (folded panels): solid = mountain, dashed = valley (dotted = perforate) — score, do not cut
+  GUIDE   orange  #ff8800   the next layer's outline engraved on the slice below it (stacked, `next_outline`) — engrave, do not cut
   LABEL   red     #ff0000   part labels + leader lines + sheet border (engrave / do not cut)
 """
 from __future__ import annotations
 import argparse, html, json, pathlib
 import ezdxf
 import numpy as np
+import shapely
 from ezdxf import units as dxfunits
-from shapely.geometry import box
-from .geometry import as_multi, poly_coords
+from shapely.geometry import Polygon, box
+from .geometry import as_multi, label_spot, poly_coords
 
-COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "LABEL": "#ff0000"}
+COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
-ACI = {"OUTER": 5, "INNER": 3, "SCORE": 2, "LABEL": 1}
+ACI = {"OUTER": 5, "INNER": 3, "SCORE": 2, "GUIDE": 30, "LABEL": 1}
 UNIT = {"mm": 1.0, "cm": 0.1, "in": 1 / 25.4}
 PT = 72 / 25.4
 
@@ -110,16 +112,31 @@ def identical_groups(plan):
             for sl in plan["slices"] for pc in sl["pieces"] if pc["label"] not in copies]
 
 
-def item_for_piece(pc, note="", pad=1.0, names=None, tag=""):
-    """Piece alone at the origin (kerf applied, no sheet placement): cuts and label only."""
+def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
+    """Piece alone at the origin (kerf applied, no sheet placement): cuts and label only. With `inside`, the label is
+    engraved on the part itself — at its widest spot, since a lone part carries no next-layer guide — and the drawing
+    is grown so a label too big for a small part still comes out whole for the maker to trim."""
     it = Item(pc, "kerfed", note, names, tag)
     xs = [x for _, r in it.rings for x, _ in r]; ys = [y for _, r in it.rings for _, y in r]
     x0, y0 = min(xs) - pad, min(ys) - pad
     it.rings = [(l, [(x - x0, y - y0) for x, y in r]) for l, r in it.rings]
     it.scores, it.marks = [], []
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
-    it.label_pos = (w / 2, h + 3, 0); it.leader = None
-    return it, w, h + 6
+    it.leader = None
+    if not inside:
+        it.label_pos = (w / 2, h + 3, 0)                 # above the part, as the single-part files always did
+        return it, w, h + 6
+    lw = max(6.0, 0.62 * font * len(it.label) + 2); lh = font * 1.4     # the label's own extent, sized as place_labels does
+    regs = [Polygon([(px - x0, py - y0) for px, py in r[0]], [[(px - x0, py - y0) for px, py in hole] for hole in r[1:]])
+            for r in pc["kerfed"]]
+    x, y, rot = label_spot(shapely.union_all(regs), lw, lh)
+    bw, bh = (lw, lh) if rot == 0 else (lh, lw)
+    dx, dy = min(0.0, x - bw / 2 - 1), min(0.0, y - bh / 2 - 1)     # a label overrunning left/top moves the whole drawing
+    if dx or dy:
+        it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
+        x -= dx; y -= dy; w -= dx; h -= dy
+    it.label_pos = (x, y, rot)
+    return it, max(w, x + bw / 2 + 1), max(h, y + bh / 2 + 1)       # grow the sheet of paper so nothing is clipped
 
 
 DASH = {"solid": "", "dashed": "1.5,1", "dotted": "0.4,0.8"}
@@ -184,10 +201,23 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
                 if lay == layer:
                     out.append(f'<path data-label="{it.key}" d="' + " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(ring)) + ' Z"/>')
         out.append("</g>")
-    if any(it.scores for it in items):
+    if any(style == "guide" for it in items for style, _ in it.scores):
+        # The next layer's outline on the layer below (stacked): a line layer of its own. A laser maps its operations
+        # by layer, and this one is engraved — neither cut (OUTER/INNER) nor scored (SCORE).
+        out.append(f'<g id="GUIDE" fill="none" stroke="{COLORS["GUIDE"]}" stroke-width="0.15">')
+        for it in items:
+            for style, pts in it.scores:
+                if style != "guide":
+                    continue
+                d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
+                out.append(f'<path d="{d}"/>')
+        out.append("</g>")
+    if any(style != "guide" for it in items for style, _ in it.scores):
         out.append(f'<g id="SCORE" fill="none" stroke="{COLORS["SCORE"]}" stroke-width="0.15">')
         for it in items:
             for style, pts in it.scores:
+                if style == "guide":
+                    continue
                 d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
                 out.append(f'<path d="{d}"{" stroke-dasharray=" + chr(34) + _dash(style) + chr(34) if _dash(style) else ""}/>')
         out.append("</g>")
@@ -227,7 +257,8 @@ def dxf_doc(items, labels, border=None, font=4.0, units="mm"):
         for layer, ring in it.rings:
             msp.add_lwpolyline(S(ring), close=True, dxfattribs={"layer": layer})
         for style, pts in it.scores:
-            msp.add_lwpolyline(S(pts), dxfattribs={"layer": "SCORE", "linetype": DXF_LT.get(style, "BYLAYER")})
+            # guide lines (next layer's outline, stacked) go on their own layer: engraved, not scored
+            msp.add_lwpolyline(S(pts), dxfattribs={"layer": "GUIDE" if style == "guide" else "SCORE", "linetype": DXF_LT.get(style, "BYLAYER")})
         if labels:
             for mx, my, txt in it.marks:
                 msp.add_text(txt, height=font * 0.6 * f, dxfattribs={"layer": "LABEL"}).set_placement((mx * f, my * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
@@ -260,13 +291,16 @@ def pdf_doc(path, pages, labels, border, font):
                         p = c.beginPath(); p.moveTo(ring[0][0] * PT, ring[0][1] * PT)
                         for x, y in ring[1:]: p.lineTo(x * PT, y * PT)
                         p.close(); c.drawPath(p, stroke=1, fill=0)
-        c.setStrokeColorRGB(*RGB["SCORE"])
-        for it in items:
-            for style, pts in it.scores:
-                c.setDash({"solid": [], "dashed": [3, 2], "dotted": [1, 2]}.get(style, []))
-                p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
-                for x, y in pts[1:]: p.lineTo(x * PT, y * PT)
-                c.drawPath(p, stroke=1, fill=0)
+        for layer in ("SCORE", "GUIDE"):
+            c.setStrokeColorRGB(*RGB[layer])
+            for it in items:
+                for style, pts in it.scores:
+                    if (style == "guide") != (layer == "GUIDE"):
+                        continue
+                    c.setDash({"solid": [], "dashed": [3, 2], "dotted": [1, 2]}.get(style, []))
+                    p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
+                    for x, y in pts[1:]: p.lineTo(x * PT, y * PT)
+                    c.drawPath(p, stroke=1, fill=0)
         c.setDash([])
         c.setStrokeColorRGB(*RGB["LABEL"]); c.setFillColorRGB(*RGB["LABEL"])
         if border:
@@ -298,10 +332,13 @@ def eps_doc(items, w, h, labels, border, font):
     for layer in ("OUTER", "INNER"):
         out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
         out += [path(ring, True) for it in items for lay, ring in it.rings if lay == layer]
-    out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB["SCORE"]))
-    for it in items:
-        for style, pts in it.scores:
-            out.append(PS_DASH.get(style, PS_DASH["solid"]) + " " + path(pts, False))
+    for layer in ("SCORE", "GUIDE"):
+        out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
+        for it in items:
+            for style, pts in it.scores:
+                if (style == "guide") != (layer == "GUIDE"):
+                    continue
+                out.append(PS_DASH.get(style, PS_DASH["solid"]) + " " + path(pts, False))
     out.append("[] 0 setdash %s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB["LABEL"]))
     if border:
         out.append(path([(0, 0), (w, 0), (w, h), (0, h)], True))
@@ -359,6 +396,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
     out_dir = pathlib.Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     font = font or plan["params"].get("font", 4.0); units = units or plan["params"].get("units", "mm")
     names = plan.get("codes") or {}                 # puzzle mode: engraved codes instead of positions
+    inside = bool(plan["params"].get("label_inside"))   # labels engraved on the parts, not beside them
     design = design_name(plan)                      # before every file name: two designs' files never mix
     written = []
 
@@ -390,7 +428,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             stem = names.get(pc["label"], pc["label"]) + mat_tag(plan) + thick_tag(plan, t) + f" x{n}"
             # the drawing carries the count and how many of them are turned over; the cut list names which ones
             it, w, h = item_for_piece(pc, " ".join(x for x in ([f"×{n}"] if n > 1 else []) + [f"({len(flips)} turned over)" if flips else "", note] if x), names=names,
-                                      tag=plan.get("label_tag", ""))
+                                      tag=plan.get("label_tag", ""), inside=inside, font=font)
             write(stem, [it], w, h, False)
             also = "also " + ", ".join(names.get(l, l) for l in labels[1:]) if n > 1 else note
             rows.append((f"{design} {stem}", n, size_of(it), "; ".join(x for x in [also, "turn over " + ", ".join(names.get(l, l) for l in flips) if flips else ""] if x)))

@@ -86,7 +86,7 @@ COMMON: list[Param] = [
       "or PETG ticks it", group="sheet"),
     P("sheet_margin", "number", 5, "Keep-out from the sheet edge (mm)", 0, 100, 0.5, group="sheet", unit="mm"),
     P("gap", "number", 3, "Gap between parts on the sheet (mm)", 0, 50, 0.5, group="sheet", unit="mm"),
-    P("labels", "bool", True, "Engrave part labels beside each part, with a leader line to the part (LABEL layer)", group="sheet"),
+    P("labels", "bool", True, "Engrave part labels (LABEL layer): beside each part with a leader line, or on the part itself — see `labels on the parts`", group="sheet"),
     P("font", "number", 4.0, "Label text height (mm)", 1, 30, 0.5, group="sheet", unit="mm"),
     P("label_model", "bool", True, "Engrave the model's name before each label (bunny Z-3): two models have the same part names, "
       "and parts cut together would otherwise get mixed up. The project name when it has one. Off for a longer label's room "
@@ -95,6 +95,11 @@ COMMON: list[Param] = [
       "code = a short code that gives nothing away, for a puzzle: the app, the Parts list and the 3D view still show the real "
       "labels, and assembly-key.txt in the export maps code → part. Leave that file out of the zip and the puzzle stays a puzzle",
       choices=["position", "code"], group="sheet", show_if=("labels", True)),
+    P("label_inside", "bool", False, "Engrave each label on the part itself instead of beside it: it goes inside the "
+      "outline of the next layer where the technique marks one, so the layer glued on top hides it. A label too big for "
+      "a small part is still placed — on the part's widest spot, overrunning the outline if it must — so no part ever "
+      "comes out unlabelled: trim those in your laser software. The parts you glue last keep a visible label; remove "
+      "those there too", group="sheet", show_if=("labels", True), label="labels on the parts"),
     # -- fit: three things that are easy to take for one. Only the kerf is switched by `compensate`; the slot fit and the
     # corners always apply, and the form says so in each section's line (reported: "if compensate is off, it feels like
     # none of the parameters below apply")
