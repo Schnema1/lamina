@@ -23,6 +23,11 @@ What changed in each release. The GitHub release for a version is this section, 
 - **The steps slider is easier to use.** The slider that plays the build order over the 3D view is almost three times
   as wide, so a drag lands on one layer at a time, and a counter beside it reads the step you are on, live as you
   drag and while the assembly video records. Thanks to @Schnema1.
+- **Share your build with #lamina3dapp.** The note that invites you to share a photo of your build now names
+  #lamina3dapp: #lamina3d is already full of posts about other things, so a build posted there was easy to miss.
+- **A Discord for Lamina.** Ask a question, share an idea or show what you made at
+  [discord.gg/N66bCQxmt3](https://discord.gg/N66bCQxmt3), linked from the app's header, the landing page and the
+  README. Bugs are still best sent with **report a problem**, which brings the model and settings along.
 
 ## 0.2.4
 
