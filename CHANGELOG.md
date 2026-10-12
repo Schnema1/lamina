@@ -13,6 +13,12 @@ What changed in each release. The GitHub release for a version is this section, 
   there is material under it, never over a slot or a dowel hole, and slices that are the same part with the same line
   are still cut once with a quantity. Thanks to @Schnema1.
 
+### Changed
+
+- **The steps slider is easier to use.** The slider that plays the build order over the 3D view is almost three times
+  as wide, so a drag lands on one layer at a time, and a counter beside it reads the step you are on, live as you
+  drag and while the assembly video records. Thanks to @Schnema1.
+
 ## 0.2.4
 
 Clearer and quicker. Machine & cut compensation and the Export tab now explain themselves, step by step. A change you

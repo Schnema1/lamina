@@ -47,6 +47,9 @@ button.small{padding:3px 8px;border:1px solid var(--line);background:var(--panel
 #busy_steps li.done{color:var(--ok)}#busy_steps li.done::before{content:'✓ '}
 #busy_steps li.now{color:var(--warn);font-weight:500}#busy_steps li.now::before{content:'▸ '}
 .bar{position:absolute;left:10px;top:8px;display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted);background:#0f1012cc;padding:5px 8px;border-radius:5px;flex-wrap:wrap}.bar label{display:flex;gap:5px;align-items:center}.bar input[type=range]{width:90px}.bar button{padding:2px 8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:4px;cursor:pointer;font-size:11px}
+/* the steps slider is a scrubber through the build order: wider than the other sliders so each layer gets its own
+   stretch of track, and with a live counter beside it to read off which step you have landed on */
+.bar input#steps{width:250px}.bar .stepsval{min-width:52px;text-align:center;font-variant-numeric:tabular-nums;color:var(--ink)}
 #sel{position:absolute;right:10px;top:8px;background:#0f1012ee;padding:8px 10px;border-radius:6px;border:1px solid var(--line);font-size:12px;width:250px}#sel[hidden]{display:none}#sel b{color:var(--sel)}#sel .row{display:grid;grid-template-columns:44px 1fr 66px;gap:6px;align-items:center;margin:4px 0}#sel .row input[type=number]{padding:2px 5px}#sel small{color:var(--muted);display:block;margin-top:4px}
 #hint{position:absolute;left:10px;bottom:8px;max-width:calc(100% - 130px);font-size:11px;color:var(--muted);background:#0f1012dd;padding:3px 7px;border-radius:4px}
 #hint summary{cursor:pointer}#hint summary span{color:var(--acc)}
@@ -236,7 +239,7 @@ dialog button.go{background:#2563eb;border-color:transparent;color:#fff;font-wei
 </aside>
 <section class="view" id="view">
   <div id="v3d">
-    <div class="bar"><label><input type="checkbox" id="ghost" checked> model</label><label>explode <input type="range" id="explode" min="1" max="3" step="0.05" value="1"></label><label>steps <input type="range" id="steps" min="0" max="1" step="1" value="1"></label><label>look <select id="look"><option value="group">by family</option><option>cardboard</option><option>paper</option><option>plywood</option><option>steel</option><option>brass</option><option>copper</option><option>plastic</option><option>foam</option></select></label><label title="transparency of folded panels, to see the connectors inside">panels <input type="range" id="opacity" min="0.1" max="1" step="0.05" value="1"></label><button id="fit">fit view</button></div>
+    <div class="bar"><label><input type="checkbox" id="ghost" checked> model</label><label>explode <input type="range" id="explode" min="1" max="3" step="0.05" value="1"></label><label>steps <input type="range" id="steps" min="0" max="1" step="1" value="1"><span id="steps_val" class="stepsval" title="step shown of the build order">1 / 1</span></label><label>look <select id="look"><option value="group">by family</option><option>cardboard</option><option>paper</option><option>plywood</option><option>steel</option><option>brass</option><option>copper</option><option>plastic</option><option>foam</option></select></label><label title="transparency of folded panels, to see the connectors inside">panels <input type="range" id="opacity" min="0.1" max="1" step="0.05" value="1"></label><button id="fit">fit view</button></div>
     <div id="sel" hidden></div>
     <div id="busy" hidden><span id="busy_txt">slicing…</span><div class="bar"><i></i></div><ol id="busy_steps"></ol><span id="busy_note"></span></div>
     <details id="hint"><summary>drag = orbit · wheel = zoom · right-drag = pan · <span>all controls</span></summary><dl>
@@ -884,7 +887,8 @@ function fitView(){const b=new THREE.Box3().setFromObject(parts.children.length?
   // close enough to read a slot, never onto the point it turns about (from 0 no zoom ever comes back), never so far the
   // model is lost; the clipping planes outside both, so nothing is cut away at either end
   controls.minDistance=s/40;controls.maxDistance=s*8;camera.near=s/200;camera.far=s*20;camera.updateProjectionMatrix()}
-function applyExplode(){const e=+$('#explode').value,k=+$('#steps').value;for(const m of parts.children){if(m.userData.group==='B')continue;m.position.copy(m.userData.origin).multiplyScalar(e-1);m.visible=m.userData.i<k}
+function applyExplode(){const e=+$('#explode').value,st=$('#steps'),k=+st.value;for(const m of parts.children){if(m.userData.group==='B')continue;m.position.copy(m.userData.origin).multiplyScalar(e-1);m.visible=m.userData.i<k}
+  $('#steps_val').textContent=`${k} / ${+st.max||0}`;   // the step counter, live while the slider is dragged
   const s=selected&&parts.children.find(c=>c.userData.slice===selected); if(s)drawGizmo(s);   // the handles ride with the part
   dirty=true}
 $('#explode').oninput=$('#steps').oninput=applyExplode; $('#ghost').onchange=()=>{ghost.visible=$('#ghost').checked;dirty=true}; $('#fit').onclick=()=>{fitView();dirty=true}; $('#look').onchange=$('#opacity').oninput=applyLook;
