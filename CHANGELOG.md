@@ -2,6 +2,17 @@
 
 What changed in each release. The GitHub release for a version is this section, pasted.
 
+## 0.2.5
+
+### Added
+
+- **Stacked: the next layer's outline, engraved on the slice below.** A new option for stacked models engraves on
+  each slice the outline of the layer that goes on top of it, as a light line: a GUIDE layer of its own in the cut
+  files (orange), so the laser engraves it and cuts nothing. Line the stack up by it as you glue. An offset moves the
+  line a little inward, so the layer above hides it even when the glue-up is a hair off. The line is drawn only where
+  there is material under it, never over a slot or a dowel hole, and slices that are the same part with the same line
+  are still cut once with a quantity. Thanks to @Schnema1.
+
 ## 0.2.4
 
 Clearer and quicker. Machine & cut compensation and the Export tab now explain themselves, step by step. A change you
