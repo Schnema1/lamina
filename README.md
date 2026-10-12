@@ -487,7 +487,15 @@ it writes to is one constant at the top of that file; a fork changes that line.
 
 Issues and pull requests are welcome. A new construction technique is one file in `core/modes/`; checks, nesting
 and export come for free. Run the tests above before opening a pull request, and say which example and settings
-you checked the change on.
+you checked the change on. A merged pull request is credited to you in the release notes of the version it ships
+in, and in the list below.
+
+## Thanks
+
+People whose pull requests are part of Lamina:
+
+- [@Schnema1](https://github.com/Schnema1) — the next layer's outline engraved on each stacked slice, labels
+  engraved on the parts themselves, and the wider steps slider with its counter.
 
 ## Support
 
