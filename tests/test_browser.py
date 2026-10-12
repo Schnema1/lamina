@@ -54,6 +54,7 @@ def test_solids_extrude_without_a_triangulation_engine(jobs, monkeypatch):
     assert fallback.is_watertight and abs(fallback.volume - native.volume) < 1e-6 and abs(fallback.volume - ring.area * 3) < 1e-6
 
 
+@pytest.mark.timeout(900)   # the whole matrix: 65 s alone, past the 180 s cap with twelve workers sharing the cores (025)
 def test_every_feature_works_without_the_compiled_extras(tmp_path):
     """What Pyodide cannot ship — rtree, fast-simplification, manifold3d, earcut — must not take a feature with it.
     A fresh interpreter (tests/browser_env.py) blocks those modules before trimesh loads and runs the whole matrix."""
