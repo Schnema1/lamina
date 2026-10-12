@@ -2,6 +2,16 @@
 
 What changed in each release. The GitHub release for a version is this section, pasted.
 
+## 0.2.5
+
+### Added
+
+- **Labels on the parts themselves.** A new sheet option engraves each part's label on the part instead of beside it
+  with a leader line. On a stacked model with the next layer's outline engraved, the label goes inside that outline,
+  so the layer glued on top hides it; otherwise it sits where the part is widest. A label too big for a small part is
+  still placed, running past the edge if it must, for you to trim in your laser software: no part comes out without
+  its name. The one-file-per-part export grows its drawing so such a label is not cut off. Thanks to @Schnema1.
+
 ## 0.2.4
 
 Clearer and quicker. Machine & cut compensation and the Export tab now explain themselves, step by step. A change you

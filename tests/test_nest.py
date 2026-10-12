@@ -191,3 +191,27 @@ def test_a_layer_in_separate_islands_is_cut_as_separate_parts(tmp_path):
             assert pc["label_pos"], pc["label"]                                  # every island carries its own label
             x0, y0, x1, y1 = Polygon(pc["placed"][0][0]).bounds
             assert x1 - x0 < 60 and y1 - y0 < 60, (pc["label"], x1 - x0, y1 - y0)   # one 50 mm block, not both
+
+
+def test_labels_inside_sit_on_their_part_and_a_lone_part_file_grows_to_hold_one(tmp_path):
+    """`label_inside`: every label is engraved on its own part — its centre inside the part's placed outline, with no
+    leader line — while the default still puts it beside the part with a leader. In the one-file-per-part export a
+    label wider than the part (a 60 mm font on the cube's 180 mm slab) is drawn whole: the drawing grows past the part."""
+    import re
+    from shapely.geometry import Point
+    from core.export import export
+    base = {"distribution": "count", "count": 3, "autofix": "off"}
+    plan = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_inside": True})
+    pieces = [pc for sl in plan["slices"] for pc in sl["pieces"]]
+    for pc in pieces:
+        x, y, _ = pc["label_pos"]
+        assert Polygon(pc["placed"][0][0], pc["placed"][0][1:]).covers(Point(x, y)), pc["label"]
+        assert pc["leader"] is None
+    beside = build(EXAMPLES / "cube.stl", "stacked", base)
+    assert all(pc["leader"] for sl in beside["slices"] for pc in sl["pieces"])
+
+    x0, _, x1, _ = Polygon(pieces[0]["placed"][0][0]).bounds
+    plan["params"]["font"] = 60.0                                     # "cube Z-1" at 60 mm: about 300 mm of label on a 180 mm slab
+    files = [f for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True) if " Z-1 " in f.name]
+    width = float(re.search(r'viewBox="0 0 ([\d.]+) ', files[0].read_text(encoding="utf-8")).group(1))
+    assert width > 1.5 * (x1 - x0), width                             # the page is wider than the slab: the label is all on it
