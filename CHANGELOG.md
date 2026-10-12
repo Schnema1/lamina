@@ -6,11 +6,23 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ### Added
 
+- **Stacked: the next layer's outline, engraved on the slice below.** A new option for stacked models engraves on
+  each slice the outline of the layer that goes on top of it, as a light line: a GUIDE layer of its own in the cut
+  files (orange), so the laser engraves it and cuts nothing. Line the stack up by it as you glue. An offset moves the
+  line a little inward, so the layer above hides it even when the glue-up is a hair off. The line is drawn only where
+  there is material under it, never over a slot or a dowel hole, and slices that are the same part with the same line
+  are still cut once with a quantity. Thanks to @Schnema1.
 - **Labels on the parts themselves.** A new sheet option engraves each part's label on the part instead of beside it
   with a leader line. On a stacked model with the next layer's outline engraved, the label goes inside that outline,
   so the layer glued on top hides it; otherwise it sits where the part is widest. A label too big for a small part is
   still placed, running past the edge if it must, for you to trim in your laser software: no part comes out without
   its name. The one-file-per-part export grows its drawing so such a label is not cut off. Thanks to @Schnema1.
+
+### Changed
+
+- **The steps slider is easier to use.** The slider that plays the build order over the 3D view is almost three times
+  as wide, so a drag lands on one layer at a time, and a counter beside it reads the step you are on, live as you
+  drag and while the assembly video records. Thanks to @Schnema1.
 
 ## 0.2.4
 

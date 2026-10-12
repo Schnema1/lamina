@@ -6,6 +6,7 @@ Layers / colours follow Slicer's Cut Layout convention:
   OUTER   blue    #0055ff   outer silhouette of each part
   INNER   green   #00aa00   interior cuts (slots, holes)
   SCORE   yellow  #d4a800   fold lines (folded panels): solid = mountain, dashed = valley (dotted = perforate) — score, do not cut
+  GUIDE   orange  #ff8800   the next layer's outline engraved on the slice below it (stacked, `next_outline`) — engrave, do not cut
   LABEL   red     #ff0000   part labels + leader lines + sheet border (engrave / do not cut)
 """
 from __future__ import annotations
@@ -17,9 +18,9 @@ from ezdxf import units as dxfunits
 from shapely.geometry import Polygon, box
 from .geometry import as_multi, label_spot, poly_coords
 
-COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "LABEL": "#ff0000"}
+COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
-ACI = {"OUTER": 5, "INNER": 3, "SCORE": 2, "LABEL": 1}
+ACI = {"OUTER": 5, "INNER": 3, "SCORE": 2, "GUIDE": 30, "LABEL": 1}
 UNIT = {"mm": 1.0, "cm": 0.1, "in": 1 / 25.4}
 PT = 72 / 25.4
 
@@ -200,10 +201,23 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
                 if lay == layer:
                     out.append(f'<path data-label="{it.key}" d="' + " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(ring)) + ' Z"/>')
         out.append("</g>")
-    if any(it.scores for it in items):
+    if any(style == "guide" for it in items for style, _ in it.scores):
+        # The next layer's outline on the layer below (stacked): a line layer of its own. A laser maps its operations
+        # by layer, and this one is engraved — neither cut (OUTER/INNER) nor scored (SCORE).
+        out.append(f'<g id="GUIDE" fill="none" stroke="{COLORS["GUIDE"]}" stroke-width="0.15">')
+        for it in items:
+            for style, pts in it.scores:
+                if style != "guide":
+                    continue
+                d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
+                out.append(f'<path d="{d}"/>')
+        out.append("</g>")
+    if any(style != "guide" for it in items for style, _ in it.scores):
         out.append(f'<g id="SCORE" fill="none" stroke="{COLORS["SCORE"]}" stroke-width="0.15">')
         for it in items:
             for style, pts in it.scores:
+                if style == "guide":
+                    continue
                 d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
                 out.append(f'<path d="{d}"{" stroke-dasharray=" + chr(34) + _dash(style) + chr(34) if _dash(style) else ""}/>')
         out.append("</g>")
@@ -243,7 +257,8 @@ def dxf_doc(items, labels, border=None, font=4.0, units="mm"):
         for layer, ring in it.rings:
             msp.add_lwpolyline(S(ring), close=True, dxfattribs={"layer": layer})
         for style, pts in it.scores:
-            msp.add_lwpolyline(S(pts), dxfattribs={"layer": "SCORE", "linetype": DXF_LT.get(style, "BYLAYER")})
+            # guide lines (next layer's outline, stacked) go on their own layer: engraved, not scored
+            msp.add_lwpolyline(S(pts), dxfattribs={"layer": "GUIDE" if style == "guide" else "SCORE", "linetype": DXF_LT.get(style, "BYLAYER")})
         if labels:
             for mx, my, txt in it.marks:
                 msp.add_text(txt, height=font * 0.6 * f, dxfattribs={"layer": "LABEL"}).set_placement((mx * f, my * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
@@ -276,13 +291,16 @@ def pdf_doc(path, pages, labels, border, font):
                         p = c.beginPath(); p.moveTo(ring[0][0] * PT, ring[0][1] * PT)
                         for x, y in ring[1:]: p.lineTo(x * PT, y * PT)
                         p.close(); c.drawPath(p, stroke=1, fill=0)
-        c.setStrokeColorRGB(*RGB["SCORE"])
-        for it in items:
-            for style, pts in it.scores:
-                c.setDash({"solid": [], "dashed": [3, 2], "dotted": [1, 2]}.get(style, []))
-                p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
-                for x, y in pts[1:]: p.lineTo(x * PT, y * PT)
-                c.drawPath(p, stroke=1, fill=0)
+        for layer in ("SCORE", "GUIDE"):
+            c.setStrokeColorRGB(*RGB[layer])
+            for it in items:
+                for style, pts in it.scores:
+                    if (style == "guide") != (layer == "GUIDE"):
+                        continue
+                    c.setDash({"solid": [], "dashed": [3, 2], "dotted": [1, 2]}.get(style, []))
+                    p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
+                    for x, y in pts[1:]: p.lineTo(x * PT, y * PT)
+                    c.drawPath(p, stroke=1, fill=0)
         c.setDash([])
         c.setStrokeColorRGB(*RGB["LABEL"]); c.setFillColorRGB(*RGB["LABEL"])
         if border:
@@ -314,10 +332,13 @@ def eps_doc(items, w, h, labels, border, font):
     for layer in ("OUTER", "INNER"):
         out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
         out += [path(ring, True) for it in items for lay, ring in it.rings if lay == layer]
-    out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB["SCORE"]))
-    for it in items:
-        for style, pts in it.scores:
-            out.append(PS_DASH.get(style, PS_DASH["solid"]) + " " + path(pts, False))
+    for layer in ("SCORE", "GUIDE"):
+        out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
+        for it in items:
+            for style, pts in it.scores:
+                if (style == "guide") != (layer == "GUIDE"):
+                    continue
+                out.append(PS_DASH.get(style, PS_DASH["solid"]) + " " + path(pts, False))
     out.append("[] 0 setdash %s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB["LABEL"]))
     if border:
         out.append(path([(0, 0), (w, 0), (w, h), (0, h)], True))
