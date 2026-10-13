@@ -19,10 +19,10 @@ import numpy as np
 import shapely
 from shapely import affinity
 from scipy.ndimage import binary_erosion, distance_transform_edt
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import split
 from shapely.strtree import STRtree
-from .geometry import as_multi, label_spot
+from .geometry import as_multi, label_box, label_spot
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -344,14 +344,16 @@ def place_labels(sh, font, tag="", inside=False):
     stacked "engrave next layer" guide), so the layer glued on top hides it; a label too big for a small part is still
     placed, on the part's widest spot and past its outline if it must, for the maker to trim in the laser software —
     the one thing that never happens is a part coming out with no label at all."""
+    text = lambda pc: f"{tag} {pc.label}" if tag else pc.label        # `tag`: the model name engraved first
+    if inside:
+        for pc in sh.pieces:
+            pc.label_pos = inside_spot(pc, *label_box(text(pc), font))   # engraved on the part: no leader line to it
+            pc.leader = None
+        return
     tree = STRtree(sh.placed)
     taken = []
     for pc in sh.pieces:
-        w = max(6.0, 0.62 * font * (len(pc.label) + (len(tag) + 1 if tag else 0)) + 2); h = font * 1.4   # `tag`: the model name engraved first
-        if inside:
-            pc.label_pos = inside_spot(pc, w, h)               # engraved on the part: no leader line to it
-            pc.leader = None
-            continue
+        w, h = label_box(text(pc), font)
         x0, y0, x1, y1 = pc.placed.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         spots = []
         for d in (1.0, 4.0, 8.0, 14.0, 22.0):
@@ -390,6 +392,9 @@ def inside_spot(pc, w, h):
     guides = [ln for s, ln in pc.placed_lines if s == "guide"]
     if guides:
         loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
+        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
+        # not covered, so a label there would show through
+        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
         if loops:
             under = shapely.union_all(loops).intersection(region)
             if not under.is_empty:

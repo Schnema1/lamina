@@ -16,7 +16,7 @@ import numpy as np
 import shapely
 from ezdxf import units as dxfunits
 from shapely.geometry import Polygon, box
-from .geometry import as_multi, label_spot, poly_coords
+from .geometry import as_multi, label_box, label_spot, poly_coords
 
 COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
@@ -113,20 +113,22 @@ def identical_groups(plan):
 
 
 def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
-    """Piece alone at the origin (kerf applied, no sheet placement): cuts and label only. With `inside`, the label is
-    engraved on the part itself — at its widest spot, since a lone part carries no next-layer guide — and the drawing
-    is grown so a label too big for a small part still comes out whole for the maker to trim."""
+    """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, and its label.
+    With `inside`, the label is engraved on the part itself — at its widest spot, since a lone part carries no
+    next-layer guide — and the drawing is grown so a label too big for a small part still comes out whole for the
+    maker to trim."""
     it = Item(pc, "kerfed", note, names, tag)
     xs = [x for _, r in it.rings for x, _ in r]; ys = [y for _, r in it.rings for _, y in r]
     x0, y0 = min(xs) - pad, min(ys) - pad
     it.rings = [(l, [(x - x0, y - y0) for x, y in r]) for l, r in it.rings]
-    it.scores, it.marks = [], []
+    it.scores = [(s, [(x - x0, y - y0) for x, y in pts]) for s, pts in pc.get("kerfed_lines") or []]   # in the part's own frame, like `kerfed`
+    it.marks = []
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
     it.leader = None
     if not inside:
         it.label_pos = (w / 2, h + 3, 0)                 # above the part, as the single-part files always did
         return it, w, h + 6
-    lw = max(6.0, 0.62 * font * len(it.label) + 2); lh = font * 1.4     # the label's own extent, sized as place_labels does
+    lw, lh = label_box(it.label, font)
     regs = [Polygon([(px - x0, py - y0) for px, py in r[0]], [[(px - x0, py - y0) for px, py in hole] for hole in r[1:]])
             for r in pc["kerfed"]]
     x, y, rot = label_spot(shapely.union_all(regs), lw, lh)
@@ -134,6 +136,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
     dx, dy = min(0.0, x - bw / 2 - 1), min(0.0, y - bh / 2 - 1)     # a label overrunning left/top moves the whole drawing
     if dx or dy:
         it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
+        it.scores = [(s, [(qx - dx, qy - dy) for qx, qy in pts]) for s, pts in it.scores]
         x -= dx; y -= dy; w -= dx; h -= dy
     it.label_pos = (x, y, rot)
     return it, max(w, x + bw / 2 + 1), max(h, y + bh / 2 + 1)       # grow the sheet of paper so nothing is clipped
@@ -201,25 +204,16 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
                 if lay == layer:
                     out.append(f'<path data-label="{it.key}" d="' + " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(ring)) + ' Z"/>')
         out.append("</g>")
-    if any(style == "guide" for it in items for style, _ in it.scores):
-        # The next layer's outline on the layer below (stacked): a line layer of its own. A laser maps its operations
-        # by layer, and this one is engraved — neither cut (OUTER/INNER) nor scored (SCORE).
-        out.append(f'<g id="GUIDE" fill="none" stroke="{COLORS["GUIDE"]}" stroke-width="0.15">')
-        for it in items:
-            for style, pts in it.scores:
-                if style != "guide":
-                    continue
-                d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
-                out.append(f'<path d="{d}"/>')
-        out.append("</g>")
-    if any(style != "guide" for it in items for style, _ in it.scores):
-        out.append(f'<g id="SCORE" fill="none" stroke="{COLORS["SCORE"]}" stroke-width="0.15">')
-        for it in items:
-            for style, pts in it.scores:
-                if style == "guide":
-                    continue
-                d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
-                out.append(f'<path d="{d}"{" stroke-dasharray=" + chr(34) + _dash(style) + chr(34) if _dash(style) else ""}/>')
+    # Lines: the next layer's outline on a stacked slice (GUIDE, engraved) and fold lines (SCORE, scored, dashed by
+    # style) each on a layer of their own, since a laser maps its operations by layer. A layer with nothing on it is left out.
+    for layer in ("GUIDE", "SCORE"):
+        lines = [(style, pts) for it in items for style, pts in it.scores if (style == "guide") == (layer == "GUIDE")]
+        if not lines:
+            continue
+        out.append(f'<g id="{layer}" fill="none" stroke="{COLORS[layer]}" stroke-width="0.15">')
+        for style, pts in lines:
+            d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
+            out.append(f'<path d="{d}"{" stroke-dasharray=" + chr(34) + _dash(style) + chr(34) if _dash(style) else ""}/>')
         out.append("</g>")
     if labels or border:
         out.append(f'<g id="LABEL" fill="{COLORS["LABEL"]}" stroke="{COLORS["LABEL"]}" stroke-width="0.15" font-family="sans-serif" font-size="{font}">')

@@ -70,12 +70,8 @@ class Stacked(Mode):
         if p["space"] > 0 and p["connect"] == "none":
             ctx.errors.append(f"space = {p['space']:g} mm between slices but no connectors — the slices would float: set connect to tab (spacers) or dowel, or set space to 0")
         if p["connect"] == "none" or len(slices) < 2:
-            if p["next_outline"] and len(slices) > 1:
-                self.guide_outlines(ctx, slices)
             return slices
         extra = self.connect(ctx, slices)
-        if p["next_outline"] and len(slices) > 1:
-            self.guide_outlines(ctx, slices)
         # assembly order: a slice, then the connectors that sit on it, then the next slice …
         by_pair = {}
         for sl in extra:
@@ -104,14 +100,14 @@ class Stacked(Mode):
         slice's own frame — stacked slices are parallel, so that is a plain 2D transform — and only the part of its
         silhouette that lands on this slice's material is kept: a line can be engraved only where there is material to
         burn it into, so the overhang of a wider layer above stops at this layer's edge. Kept as `lines` with the style
-        "guide", which the export draws on its own GUIDE layer (engrave, not cut or score)."""
+        "guide", which the export draws on its own GUIDE layer (engrave, not cut or score). plan.build calls this once
+        the outlines are final — grown where asked, slivers shed, slots and holes taken out of `profile` — so the line
+        is the layer as it will be cut, inner edges of a hollow layer included."""
         off = ctx.p["next_outline_offset"]
         for a, b in zip(slices, slices[1:]):
             A = np.linalg.inv(a.M) @ b.M                      # b's local xy → a's local xy
             tf = [A[0, 0], A[0, 1], A[1, 0], A[1, 1], A[0, 3], A[1, 3]]
-            clip = as_multi(a.raw.difference(unary_union(a.cuts))) if a.cuts else a.raw   # slots/dowels leave no material to engrave
-            if clip.is_empty:
-                continue
+            clip = a.profile                                  # the material: slots and dowel holes leave nothing to engrave
             for poly in as_multi(b.raw).geoms:
                 placed = shapely.affinity.affine_transform(poly, tf)
                 # The guide sits on the next layer's true edge; a negative `next_outline_offset` pulls it in, so the
@@ -122,13 +118,14 @@ class Stacked(Mode):
                     if placed.is_empty:
                         continue
                 for part in as_multi(placed).geoms:
-                    # A neighbour the same shape lies exactly on this slice's outline, and a line that hugs a polygon
-                    # boundary comes back from GEOS cut at every vertex — one path per point, hundreds of them. Merging
-                    # the pieces back into whole lines keeps the guide one line per ring.
-                    merged = shapely.line_merge(as_lines(part.exterior.intersection(clip)))
-                    for ln in as_lines(merged).geoms:
-                        if ln.length > 1e-6:
-                            a.lines.append(("guide", ln))
+                    for ring in (part.exterior, *part.interiors):
+                        # A neighbour the same shape lies exactly on this slice's outline, and a line that hugs a
+                        # polygon boundary comes back from GEOS cut at every vertex — one path per point, hundreds of
+                        # them. Merging the pieces back into whole lines keeps the guide one line per ring.
+                        merged = shapely.line_merge(as_lines(ring.intersection(clip)))
+                        for ln in as_lines(merged).geoms:
+                            if ln.length > 1e-6:
+                                a.lines.append(("guide", ln))
 
     # ---------------------------------------------------------------- connectors
     def spread(self, region, n, apart=0.0, clear=(), by=0.0):

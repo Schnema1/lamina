@@ -65,8 +65,31 @@ def test_next_layer_outline_goes_on_the_guide_layer_and_identical_slices_stay_on
     guide_g = tree.xpath('//svg:g[@id="GUIDE"]', namespaces=SVG_NS)[0]
     assert len(guide_g.xpath('.//svg:path', namespaces=SVG_NS)) == sum(len(pc["lines"]) for pc in pieces if pc["place"][0] == 0)
 
-    files = {f.name.split(" ", 1)[1] for f in export(plan, tmp_path / "pieces", fmts=("svg",), labels=True, per_piece=True)}
+    files = {f.name.split(" ", 1)[1]: f for f in export(plan, tmp_path / "pieces", fmts=("svg",), labels=True, per_piece=True)}
     assert "Z-1 x3.svg" in files and "Z-4 x1.svg" in files, files
+    # the one-file-per-part export carries the guide too, in the part's own frame
+    piece = etree.parse(str(files["Z-1 x3.svg"]))
+    z1 = next(pc for pc in pieces if pc["label"] == "Z-1")
+    assert len(piece.xpath('//svg:g[@id="GUIDE"]//svg:path', namespaces=SVG_NS)) == len(z1["kerfed_lines"]) == len(z1["lines"]) > 0
+    assert not etree.parse(str(files["Z-4 x1.svg"])).xpath('//svg:g[@id="GUIDE"]', namespaces=SVG_NS)
+
+
+def test_guide_is_the_layer_as_cut_with_its_inner_edge(tmp_path):
+    """The guide is the layer above as it will be cut, not as it was sectioned: a slice grown to mend a thin bridge
+    overhangs the one below, so nothing of it lands on that slice's material, while the grown slice's own guide (the
+    layer above it) does. A hollow layer marks its inner edge as well as its outer one."""
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off", "next_outline": True, "grow": {"Z-2": 2.0}})
+    by = {pc["label"]: pc for sl in plan["slices"] for pc in sl["pieces"]}
+    assert not by["Z-1"]["lines"], by["Z-1"]["lines"]                # Z-2 is 2 mm wider all round: it overhangs Z-1
+    (_, ring), = by["Z-2"]["lines"]                                    # Z-3's square, well inside the grown Z-2
+    xs = [x for x, _ in ring]; z2 = [x for x, _ in by["Z-2"]["kerfed"][0][0]]; z3 = [x for x, _ in by["Z-3"]["kerfed"][0][0]]
+    assert abs((max(xs) - min(xs)) - (max(z3) - min(z3))) < 0.5 and (max(z2) - min(z2)) - (max(xs) - min(xs)) > 3
+
+    plan = build(EXAMPLES / "tube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off", "connect": "none", "next_outline": True})
+    by = {pc["label"]: pc for sl in plan["slices"] for pc in sl["pieces"]}
+    assert len(by["Z-1"]["kerfed"][0]) == 2                            # the tube's slice is a ring: one outer edge, one hole
+    lengths = sorted(sum(((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5 for (x0, y0), (x1, y1) in zip(pts, pts[1:])) for _, pts in by["Z-1"]["lines"])
+    assert len(lengths) == 2 and lengths[0] < lengths[1] * 0.9          # both edges engraved: the inner ring is the shorter line
 
 
 def test_svg_score_and_label_counts_folded(tmp_path):

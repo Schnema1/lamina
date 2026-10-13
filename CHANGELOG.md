@@ -29,6 +29,11 @@ What changed in each release. The GitHub release for a version is this section, 
   [discord.gg/N66bCQxmt3](https://discord.gg/N66bCQxmt3), linked from the app's header, the landing page and the
   README. Bugs are still best sent with **report a problem**, which brings the model and settings along.
 
+### Fixed
+
+- **One file per part keeps the lines.** The one-file-per-part export left every fold line off a folded panel, and
+  would have left off the new guide line; both are in those files now, exactly as on the sheet.
+
 ## 0.2.4
 
 Clearer and quicker. Machine & cut compensation and the Export tab now explain themselves, step by step. A change you
