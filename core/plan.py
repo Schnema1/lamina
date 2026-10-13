@@ -482,6 +482,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
                 continue
             sl.profile = prof
             kept.append(sl)
+        if p.get("next_outline") and hasattr(mode, "guide_outlines"):
+            mode.guide_outlines(ctx, [s for s in kept if s.group == "S"])   # on the finished outlines: grown, slivers shed
         dropped = [s for s in slices if s not in kept and s.label not in grazed]
         slices = kept
         progress("checking the parts and the assembly" + again, 0.7)
@@ -585,7 +587,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
                         "facets": [{"M": np.round(M, 6).tolist(), "rings": poly_coords(g)} for M, g in pc.facets],   # 3D view
                         "kerfed": poly_coords(pc.kerfed),        # local 2D, kerf applied (per-piece export)
                         "placed": poly_coords(pc.placed),        # sheet coordinates, kerf applied
-                        "lines": [[s, line_coords(l)[0]] for s, l in pc.placed_lines],   # score lines on the sheet
+                        "lines": [[s, line_coords(l)[0]] for s, l in pc.placed_lines],   # fold and guide lines on the sheet
+                        "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
                         "marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.placed_marks],
                         "label_pos": pc.label_pos, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
                         "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight

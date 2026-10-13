@@ -24,6 +24,11 @@ What changed in each release. The GitHub release for a version is this section, 
   as wide, so a drag lands on one layer at a time, and a counter beside it reads the step you are on, live as you
   drag and while the assembly video records. Thanks to @Schnema1.
 
+### Fixed
+
+- **One file per part keeps the lines.** The one-file-per-part export left every fold line off a folded panel, and
+  would have left off the new guide line; both are in those files now, exactly as on the sheet.
+
 ## 0.2.4
 
 Clearer and quicker. Machine & cut compensation and the Export tab now explain themselves, step by step. A change you
