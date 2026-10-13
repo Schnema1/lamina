@@ -109,8 +109,9 @@ const clip = async (name, n, step) => {
 
 // ---------------------------------------------------------------- scenes
 // the head scan comes face-up with the neck along -y: rotate x 90° stands it up facing the camera
-// round 3 drops the thin bits (ears, neck) no slot can hold — on a 1 mm grid, so the scan's own detail stays
-const HEAD = { rotate: [90, 0, 0], round: 3, shrinkwrap: 1.0, smooth: 6 };
+// round 3 drops the thin bits (ears, neck) no slot can hold; the grid it picks itself (1.7 mm) keeps the scan's
+// detail now that the remesh measures the surface instead of stepping it, and takes a quarter of the time of 1 mm
+const HEAD = { rotate: [90, 0, 0], round: 3, smooth: 6 };
 // interlocked head: the three edge slices through the ears keep a bridge under 2 mm; grown as the fix buttons do
 const INTERLOCKED = { p: { ...HEAD, nx: 12, ny: 9 }, fix: {} };          // the thin bridges left are grown by heal()
 const S = {};

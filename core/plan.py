@@ -162,23 +162,30 @@ def distance_to(mesh, pts, k=8):
     than its spacing from the points — measured against trimesh's rtree answer on the blob and the bunny, k=8 is
     within 0.015 mm, k=6 within 0.11 mm."""
     from scipy.spatial import cKDTree
-    tri = mesh.triangles
+    tri = mesh.triangles; cen = tri.mean(1)
+    reach = np.linalg.norm(tri - cen[:, None], axis=2).max(1)   # how far a triangle extends from its centroid
     k = min(k, len(tri))
-    _, idx = cKDTree(tri.mean(1)).query(pts, k)
-    d = np.full(len(pts), np.inf)
+    dc, idx = (a.reshape(len(pts), -1) for a in cKDTree(cen).query(pts, k, workers=-1))
+    best = np.full(len(pts), np.inf)
     for j in range(k):                                     # k passes over n points, not one over n·k: memory
-        c = trimesh.triangles.closest_point(tri[idx[:, j]], pts)
-        d = np.minimum(d, np.linalg.norm(c - pts, axis=1))
-    return d
+        may = np.flatnonzero(dc[:, j] - reach[idx[:, j]] < best)   # a triangle that could still beat the best
+        if not len(may):
+            break
+        c = trimesh.triangles.closest_point(tri[idx[may, j]], pts[may])
+        best[may] = np.minimum(best[may], np.linalg.norm(c - pts[may], axis=1))
+    return best
 
 
-def field(mesh, inside, pitch, origin, band):
-    """Signed distance to the surface (mm, positive inside) at every grid corner: exact within `band` of it, the
-    grid's own distance transform beyond, where only the sign and the rough size matter. Triangles bigger than two
-    grid steps are split first, so that the nearest centroids are the nearest triangles."""
+def field(mesh, inside, pitch, origin, inner, outer):
+    """Signed distance to the surface (mm, positive inside) at every grid corner: exact to `inner` mm inside it and
+    `outer` outside, as deep as the shifts to come need, and the grid's own chessboard distance beyond — never more
+    than the true distance, so nothing a shift could move past the band is read as farther than it is, and a third
+    the cost of a Euclidean transform. Triangles bigger than two grid steps are split first, so that the nearest
+    centroids are the nearest triangles."""
     from scipy import ndimage
-    f = np.where(inside, ndimage.distance_transform_edt(inside), -ndimage.distance_transform_edt(~inside)) * pitch
-    near = np.abs(f) <= band
+    steps = lambda m: ndimage.distance_transform_cdt(m, metric="chessboard")
+    f = np.where(inside, steps(inside), -steps(~inside)) * float(pitch)
+    near = (f <= inner) & (f >= -outer)
     if mesh.edges_unique_length.max() > 2 * pitch:         # marching cubes' own triangles never need it
         mesh = trimesh.Trimesh(*trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces, 2 * pitch), process=False)
     f[near] = np.sign(f[near]) * distance_to(mesh, np.argwhere(near) * pitch + origin)
@@ -219,8 +226,7 @@ def modify_form(mesh, p, notes, fine=False):
     # Coarsening the grid is the honest way to that ceiling — decimating afterwards would cost the watertight surface
     # every section depends on.
     pitch = max(pitch, math.sqrt(2 * mesh.area / REMESH_FACES))
-    band = r + max(t, h) + 1.5 * pitch                     # how far from the surface the field has to be exact: the
-    # farthest any shift below moves it (round's dilation goes r out), plus the grid's own uncertainty about "near"
+    m = 1.5 * pitch                                        # the grid's own uncertainty about what is "near"
     inside, origin = inside_at(mesh, pitch, int(math.ceil((r / 2 + t) / pitch)) + 2)
     # A closed cavity — a scan's inner surface, a model wound to be hollow — is solid, as before: hollow measures its
     # wall from the outside. Its surface drops out of the measuring (a face whose normal points into the cavity:
@@ -232,16 +238,21 @@ def modify_form(mesh, p, notes, fine=False):
         at = np.round((mesh.triangles.mean(1) + pitch * mesh.face_normals - origin) / pitch).astype(int)
         cavity = (filled & ~inside)[tuple(np.clip(at, 0, np.array(inside.shape) - 1).T)]
         mesh = mesh.submesh([np.flatnonzero(~cavity)], append=True)
-    f = field(mesh, filled, pitch, origin, band)
+    def again(f, inner, outer):                             # the field measured afresh against its own surface
+        return field(surface(f, pitch, origin), f > 0, pitch, origin, inner, outer)
 
-    def again(f):                                           # the field measured afresh against its own surface
-        return field(surface(f, pitch, origin), f > 0, pitch, origin, band)
-
+    # Each field is exact only as deep as the shifts read from it: a shift moves the surface, and what was exact
+    # `inner` deep is exact `inner − shift` deep from where the surface now is.
+    deep = h if h and not t else 0                          # hollow reads the field inside, unless thicken re-measures first
     if r:                   # opening then closing with a ball of diameter r — a feature thinner than r cannot hold the
         r /= 2              # ball and goes, a gap narrower than r is bridged — is erode r/2, dilate r, erode r/2
-        f = again(again(f - r) + 2 * r) - r
+        f = field(mesh, filled, pitch, origin, r + m, m)
+        f = again(f - r, m, 2 * r + m)
+        f = again(f + 2 * r, r + deep + m, max(m, t + m - r)) - r
+    else:
+        f = field(mesh, filled, pitch, origin, deep + m, t + m)
     if t:
-        f = again(f + t) if h else f + t                    # the wall is measured inward from the thickened surface
+        f = again(f + t, h + m, m) if h else f + t          # the wall is measured inward from the thickened surface
     if h:
         f = np.minimum(f, h - f)
     out = surface(f, pitch, origin)
