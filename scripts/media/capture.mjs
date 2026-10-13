@@ -147,7 +147,8 @@ S.radial = async () => {
     await example("head_igea"); await mode("radial"); await tab("technique");
     await params({ ...HEAD, count: 10, ring_count: 6 }); await heal();
     await view(-50, 18, 1.05, 1.0); await project("radial");
-    await techClip("radial", -50, 18, 1.0, [["6 slices", () => set("count", 6)], ["14 slices", () => set("count", 14)], ["10 slices", () => set("count", 10)],
+    // 5 to 8 slices leave a ring's slot path through a vertical slice twice (the neck's hollow): not shown
+    await techClip("radial", -50, 18, 1.0, [["14 slices", () => set("count", 14)], ["10 slices", () => set("count", 10)],
         ["3 rings", () => set("ring_count", 3)], ["9 rings", () => set("ring_count", 9)], ["6 rings", () => set("ring_count", 6)]]);
 };
 // radial with an axis per lobe: the dumbbell's two balls, the plane between them at the neck (the bundled presets)
@@ -187,8 +188,10 @@ S.curve = async () => {       // the horse is long along y; the curve follows th
         [[-2.8, -100.1, -11], [-5, -134.2, -125]], [[52, -83.1, -15], [54.9, -101, -125]]];
     await fix({ curve: CURVE, branches: BRANCHES }); await heal();
     await view(-70, 16, 0.9, 1.0); await project("curve");
-    await techClip("curve", -70, 16, 0.9, [["8 ribs", () => set("count", 8)], ["12 ribs", () => set("count", 12)], ["20 ribs", () => set("count", 20)],
-        ["head point up", () => fix({ curve: [...CURVE.slice(0, -1), [136, 92]] })], ["head point back", () => fix({ curve: CURVE })]]);
+    // 12 ribs leave a rib floating and the head point at 136 puts the spine's material in a rib's slot path: 13 and
+    // 130 are the neighbours that come out clean on the exact remesh
+    await techClip("curve", -70, 16, 0.9, [["8 ribs", () => set("count", 8)], ["13 ribs", () => set("count", 13)], ["20 ribs", () => set("count", 20)],
+        ["head point up", () => fix({ curve: [...CURVE.slice(0, -1), [130, 92]] })], ["head point back", () => fix({ curve: CURVE })]]);
 };
 S.folded = async () => {      // the cow mesh is y-up: rotate x 90° stands it up
     await example("cow"); await mode("folded"); await tab("technique");
