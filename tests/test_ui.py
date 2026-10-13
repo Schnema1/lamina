@@ -82,12 +82,15 @@ def fresh(page):
 
 
 def settle(page, timeout=180_000):
-    """Wait for the status line to stand still: a change debounces, so it has to be ready twice over."""
-    for _ in range(2):
-        page.wait_for_function("() => /^(ready|error)/.test(document.getElementById('status')?.textContent)", timeout=timeout)
-        page.wait_for_timeout(600)
+    """Wait for the page to be idle: no change waiting out its debounce, no slice running. Watching the status line
+    for a while was not enough: on a slow runner the debounce outlasted the wait and the last slice's "ready" passed
+    for the next one's (bugs/024). A slice that failed keeps the plan before it, so it fails here, with its message,
+    rather than as a stale value further on."""
+    page.wait_for_function("() => window.__t?.idle() && /^(ready|error)/.test(document.getElementById('status')?.textContent)", timeout=timeout)
     assert not page.errors, page.errors
-    return page.text_content("#status")
+    status = page.text_content("#status")
+    assert status.startswith("ready"), status
+    return status
 
 
 def plan(page):
@@ -321,8 +324,8 @@ def test_the_whole_job_from_upload_to_cut_files(page):
     path.unlink(missing_ok=True)
     ok = lambda d: d.accept()
     page.on("dialog", ok)
-    page.click("#clear")
-    page.wait_for_load_state("load")
+    with page.expect_navigation():                       # the reload comes after the session's DELETE returns
+        page.click("#clear")
     settle(page)
     page.remove_listener("dialog", ok)                   # left in place it would answer the next test's dialogs
 
@@ -1136,11 +1139,12 @@ def test_the_notes_keep_their_lists_from_a_windows_checkout(page, server):
         page.goto(server + "/"); settle(page); page.wait_for_timeout(600)
         assert page.locator("#newsdlg[open]").count(), "the newest version did not announce itself"
         items = page.eval_on_selector_all("#news_body li", "els => els.map(e => e.textContent)")
-        assert len(items) == bullets > 3, items
+        assert len(items) == bullets > 1, items                           # two are enough to run into each other
         assert not any(" - **" in t or "\n" in t for t in items)          # no bullet run into another
-        page.click("#news_go")
     finally:
         page.unroute("**/changelog.md")
+        if page.locator("#newsdlg[open]").count():
+            page.click("#news_go")                       # left open, it takes every later test's clicks
 
 
 def test_the_wheel_zooms_back_out(page, server):

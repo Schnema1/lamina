@@ -23,7 +23,7 @@ await send("Emulation.setDeviceMetricsOverride", { width: 1574, height: 907, dev
 const js = async expr => { const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.text + " " + (r.exceptionDetails.exception?.description || "") + "\n" + expr); return r.result.value; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const until = async (expr, tries = 400) => { for (let i = 0; i < tries; i++) { if (await js(expr)) return true; await sleep(500); } throw new Error("timeout: " + expr); };
-const settle = async () => { await sleep(600); await until("!document.querySelector('#dot').classList.contains('busy')", 960); await sleep(400); };   // the fine-remeshed head takes ~30 s a slice
+const settle = async () => { await until("window.__t.idle()", 960); await sleep(400); };   // the fine-remeshed head takes ~30 s a slice
 const png = async (name, clip) => { const s = await send("Page.captureScreenshot", { format: "png", ...(clip ? { clip } : {}) }); fs.writeFileSync(`${OUT}/${name}.png`, Buffer.from(s.data, "base64")); };
 const shot = async name => { await png(name); await project(name); console.log("shot", name, await verdict()); };
 // the scene as a project file (what "save project" writes, minus the model: it names the bundled example),

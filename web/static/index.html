@@ -153,7 +153,7 @@ dialog button.go{background:#2563eb;border-color:transparent;color:#fff;font-wei
 <span class="sp"></span><span id="dot" title="green = ready · orange = slicing · red = error"></span><span id="status"></span>
 <label style="font-size:12px;color:var(--muted)">view <select id="viewmode"><option value="both">3D + sheets</option><option value="only3d">3D only</option><option value="only2d">sheets only</option></select></label>
 <label style="font-size:12px;color:var(--muted)">units <select id="unit"><option>mm</option><option>cm</option><option>in</option></select></label>
-<a class="kofi" href="https://marcelfarres.github.io/lamina/?ref=app" target="_blank" rel="noopener" data-tip="What Lamina does, every technique explained, how to run it yourself">docs</a><a class="kofi" href="https://github.com/marcelfarres/lamina" target="_blank" rel="noopener" data-tip="Source code, issues, releases (AGPL-3.0)">GitHub</a>
+<a class="kofi" href="https://marcelfarres.github.io/lamina/?ref=app" target="_blank" rel="noopener" data-tip="What Lamina does, every technique explained, how to run it yourself">docs</a><a class="kofi" href="https://github.com/marcelfarres/lamina" target="_blank" rel="noopener" data-tip="Source code, issues, releases (AGPL-3.0)">GitHub</a><a class="kofi" href="https://discord.gg/N66bCQxmt3" target="_blank" rel="noopener" data-tip="Questions, ideas and builds: the Lamina Discord, where other people cutting with it can answer too">Discord</a>
 <a class="kofi" data-feedback href="https://github.com/marcelfarres/lamina/issues/new?template=bug_report.yml" target="_blank" rel="noopener" data-tip="Something came out wrong? Write a sentence here and the report fills in the rest: the technique, every setting, what the checks said, the steps you took since loading the model, and the model saved ready to attach unless you untick that box. It then opens a prefilled email or the GitHub issue form for you to send — email needs no account.">report a problem</a>
 <a class="kofi" href="https://ko-fi.com/marcelfarres" target="_blank" rel="noopener" data-tip="Lamina is free and always will be — no account, no paid tier, and none of that depends on donations. If you would like to support the work and can comfortably afford it, a coffee is very welcome. No pressure.">♥ Ko-fi</a></header>
 <main>
@@ -223,7 +223,8 @@ dialog button.go{background:#2563eb;border-color:transparent;color:#fff;font-wei
       <p class="hint" style="margin:10px 0 4px">Once it is cut and built, please
         <a data-feedback="made" href="https://github.com/marcelfarres/lamina/issues/new?template=made.yml" target="_blank" rel="noopener">send me a photo</a>
         — with your OK it goes in the <a href="https://marcelfarres.github.io/lamina/?ref=app#made" target="_blank" rel="noopener">gallery</a>,
-        credited as you like — or post it with <b>#lamina3d</b> on Instagram or X.</p>
+        credited as you like — or post it with <b>#lamina3dapp</b> on Instagram or X, or on the
+        <a href="https://discord.gg/N66bCQxmt3" target="_blank" rel="noopener">Lamina Discord</a>.</p>
       <h2 id="pr_title">Prototyping (3D print)</h2>
       <div class="f protoonly"><span class="k" data-tip="Scale factor for the printed prototype (parts and thickness scale together; thickness never goes below min thickness). With PLA or PETG as the material the print is the job itself, so picking one sets this to 1">scale</span><input type="number" id="pr_scale" value="0.5" min="0.05" max="5" step="0.05"></div>
       <div class="f protoonly"><span class="k" data-tip="Or give the prototype's longest side (mm); overrides the scale when set">final size (mm)</span><input type="number" id="pr_size" data-len data-mm="" data-ph="100" data-min="5" data-step="1"></div>
@@ -515,7 +516,7 @@ function setMode(name,keep=true){
 function showTab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));$$('section[data-tab]').forEach(s=>s.classList.toggle('on',s.dataset.tab===t));
   rings.visible=t==='model';dirty=true}   // the turn rings only clutter the view outside the Model tab
 function status(s,kind){$('#status').textContent=s;$('#dot').className=kind||''}
-function schedule(){clearTimeout(timer);timer=setTimeout(slice,350)}
+function schedule(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;slice()},350)}
 
 // ---------------------------------------------------------------- undo / redo
 // The design is `state` + the technique + the units, so history is a stack of snapshots of exactly that, one taken per
@@ -1449,7 +1450,7 @@ async function init(){
     if(pr.params.material)$('#material').onchange({target:{value:pr.params.material}});
     const m=state.material||'cardboard', next=pr.params.machine||(machineOf(was)?.cuts.includes(kind(m))?was:matOf(m).machine);
     if(next===was)Object.assign(state,fit); else applyMachine(next);
-    clearTimeout(timer);renderFields()};
+    clearTimeout(timer);timer=null;renderFields()};
   // the file box lets go of the upload too: left holding it, choosing that same file again fires no change and loads nothing
   $('#example').onchange=()=>{pendingFile=null;$('#file').value='';newModel();applyPreset();countUse('model','example');fresh='loaded example '+$('#example').value;slice()};
   // A big mesh in the browser build is slow but not refused — the ceiling is this tab's memory, and it is the
@@ -1536,6 +1537,7 @@ window.laminaFeedback?.({bug:async withModel=>{
 
 // test and capture hook (tests/test_ui.py, scripts/media/capture.mjs)
 window.__t={target:()=>controls.target,parts:()=>parts.children,guides:()=>guides.children,gizmo:()=>gizmo.children,axes:()=>[...axes.children,...rings.children],camera,canvas:()=>renderer.domElement,state:()=>state,plan:()=>plan,job:()=>job,
+  idle:()=>!timer&&!busy,   // no change waiting out its debounce, no slice running: what a test or a capture waits for
   ghost:()=>ghost.children,ghostUrl:()=>ghostUrl,pivot:()=>pivot3&&rnd(pivot3),
   screen:p=>{const q=new THREE.Vector3(p[0],p[1],p[2]).project(camera),r=renderer.domElement.getBoundingClientRect();
     return [r.left+(q.x+1)/2*r.width,r.top+(1-q.y)/2*r.height]},   // world point → the pixel to click, for drag tests
