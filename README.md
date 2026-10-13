@@ -7,8 +7,9 @@
 [![python](https://img.shields.io/badge/python-3.11%2B-4f8cff)](https://www.python.org/downloads/)
 [![image](https://img.shields.io/badge/ghcr.io-lamina%3Alatest-4f8cff?logo=docker&logoColor=white)](https://github.com/marcelfarres/lamina/pkgs/container/lamina)
 [![licence](https://img.shields.io/badge/licence-AGPL--3.0-5fcf80)](LICENSE)
-[![ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/marcelfarres)
 [![discord](https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white)](https://discord.gg/N66bCQxmt3)
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/marcelfarres)
 
 **Turn a 3D model into flat parts you can cut, and check that they go back together.**
 
@@ -526,8 +527,10 @@ People whose pull requests are part of Lamina:
 ## Support
 
 Lamina is free and always will be, and none of that depends on anyone giving me anything. If you like it or any of
-my other projects and you want to support the work, there is [Ko-fi](https://ko-fi.com/marcelfarres) — only if you
-can comfortably afford it, and with no pressure at all.
+my other projects and you want to support the work, you can buy me a coffee on [Ko-fi](https://ko-fi.com/marcelfarres) —
+only if you can comfortably afford it, and with no pressure at all.
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/marcelfarres)
 
 Other ways that help just as much: tell someone who cuts sheet material that this exists, show me what you made, or
 open an issue when something goes wrong. A good bug report is worth more to me than a coffee.
