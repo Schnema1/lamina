@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 import numpy as np
 import trimesh
+import shapely
 from shapely import affinity
 from shapely.geometry import Polygon, LineString
 from shapely.ops import unary_union
@@ -139,7 +140,6 @@ class Folded(Mode):
             sl = Slice(f"P-{i + 1}", "F", frames[pn.faces[0]], t)
             sl.pn = pn
             sl.raw = as_multi(pn.union.buffer(0))
-            sl.additions, sl.skipped, sl.reduced, sl.tab_facets = [], {}, 0, []
             for k in pn.folds:
                 fa = list(mesh.faces[mesh.face_adjacency[k][0]])
                 va, vb = mesh.face_adjacency_edges[k]
@@ -284,7 +284,7 @@ class Folded(Mode):
             return None
         line = LineString([s["A"] + s["n"] * inset, s["B"] + s["n"] * inset])
         hit = line.intersection(tri_in)
-        segs = [g for g in getattr(hit, "geoms", [hit]) if g.geom_type == "LineString" and not g.is_empty]
+        segs = [g for g in shapely.get_parts(hit) if g.geom_type == "LineString" and not g.is_empty]
         if not segs:
             return None
         seg = max(segs, key=lambda g: g.length); c = np.asarray(seg.coords)

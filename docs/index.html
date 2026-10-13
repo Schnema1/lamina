@@ -210,7 +210,7 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
     <img src="media/model.jpg" width="2200" height="1268" loading="lazy" decoding="async"
          alt="The model tab with rotation rings around the model">
     <figcaption>Drag a coloured ring to turn the model, or use quarter-turn buttons. Round, smooth, hollow or thicken
-    it first — the same voxel pass that repairs meshes that are not watertight.</figcaption>
+    it first — the same remesh that repairs meshes that are not watertight, and a curve stays a curve.</figcaption>
   </figure>
 </div></section>
 
@@ -543,7 +543,7 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
     <div><h3>Where it gets rough</h3><p class="sub">Nesting is greedy: parts go to the corners other parts leave,
       so concave shapes that would need to slide into each other pack looser than a no-fit-polygon nester would
       manage. A detailed folded model takes a few seconds per change.</p></div>
-    <div><h3>What you need</h3><p class="sub">Python 3.11 or newer, <a href="https://docs.astral.sh/uv/">uv</a>, and
+    <div><h3>What you need</h3><p class="sub">Python 3.11 to 3.14 (uv fetches it), <a href="https://docs.astral.sh/uv/">uv</a>, and
       a browser with WebGL — or just Docker. Several people can share one server, each browser tab with its own
       session, but Lamina has no login of its own: put it behind your proxy's authentication before it faces the
       internet.</p></div>
@@ -609,9 +609,9 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
   <h3 style="margin-top:26px">From a terminal</h3>
   <p class="sub">If you have <a href="https://docs.astral.sh/uv/">uv</a> already, the starters are only wrapping
   these:</p>
-  <pre tabindex="0"><code>uv tool install lamina3d     # "lamina3d[cad]" adds STEP and BREP import
-lamina3d                     # opens http://localhost:8000
-uv tool upgrade lamina3d     # when a new version is out</code></pre>
+  <pre tabindex="0"><code>uv tool install --python 3.14 lamina3d     # "lamina3d[cad]" adds STEP and BREP import
+lamina3d                                   # opens http://localhost:8000
+uv tool upgrade lamina3d                   # when a new version is out</code></pre>
   <p class="sub">If <code>lamina3d</code> is not found, run <code>uv tool update-shell</code> and open a new terminal,
   or start it with <code>uv tool run lamina3d</code>.</p>
   <p class="sub">The Model tab opens on a bundled example, and the

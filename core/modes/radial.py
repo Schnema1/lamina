@@ -7,9 +7,10 @@ Assembly: stack the rings on a pole or jig, then slide each half-slice in from t
 import math
 import numpy as np
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 from . import Mode, Param, register, MAX_SLICES
 from ..model import Slice
-from ..geometry import rot_about, as_multi, circle
+from ..geometry import rot_about, as_multi, circle, section_polygons
 from ..notch import cut_slots
 
 COINCIDENT = math.cos(math.radians(3))     # two planes this close in angle are the same sheet, not a crossing
@@ -285,21 +286,26 @@ class Radial(Mode):
                     continue
                 cut_slots(h, ring, ctx, tuple(-h.radial), r)
                 cut_slots(ring, h, ctx, tuple(h.radial), 1 - r)
-        # a ring slides onto the spine from its own side of the model: a dumbbell's lower rings come up from below
-        # and its upper rings down from above, so neither has to pass through the other ball's part of the spine.
-        # Both are one sheet along their crossing line (`through`): one slot each for the whole line, to their own
-        # edges — the spine's material goes on past the ring's lobe, and a ring's chord may graze the neck
-        #
-        # A lobe between two others (three balls side by side) has no side of its own: its rings reach the spine
-        # through a neighbour. Near its axis the path runs down the neck and costs nothing; out at the edge it runs
-        # through the neighbour ball beyond the neck and cuts that ball's cap off the spine. Such a ring tries the
-        # other side, and where both sever the spine it is not slotted onto the spine at all — its own half-slices
-        # hold it, and the rings nearer the axis tie the lobe to the spine. Nearest the axis first, so those are the
-        # ones kept.
-        from shapely.ops import unary_union
-        from ..geometry import section_polygons
+        self._slot_spines(ctx, spine_sl, rings, axes, r, t)
+        if not rings:
+            ctx.errors.append("no ring slices — nothing holds the half-slices")
+        ctx.cover_r = max(max(a[2] for a in axes) / max(1, nr), math.pi * max(ctx.ext) / (4 * n)) + t
+        return halves + rings + spine_sl
+
+    def _slot_spines(self, ctx, spines, rings, axes, r, t):
+        """A ring slides onto the spine from its own side of the model: a dumbbell's lower rings come up from below
+        and its upper rings down from above, so neither has to pass through the other ball's part of the spine.
+        Both are one sheet along their crossing line (`through`): one slot each for the whole line, to their own
+        edges — the spine's material goes on past the ring's lobe, and a ring's chord may graze the neck.
+
+        A lobe between two others (three balls side by side) has no side of its own: its rings reach the spine
+        through a neighbour. Near its axis the path runs down the neck and costs nothing; out at the edge it runs
+        through the neighbour ball beyond the neck and cuts that ball's cap off the spine. Such a ring tries the
+        other side, and where both sever the spine it is not slotted onto the spine at all — its own half-slices
+        hold it, and the rings nearer the axis tie the lobe to the spine. Nearest the axis first, so those are the
+        ones kept."""
         centre = np.mean([a[0] for a in axes], axis=0)
-        for sp in spine_sl:
+        for sp in spines:
             raw = section_polygons(ctx.mesh, sp.M)
             def pieces(raw=raw, sp=sp):
                 return len(as_multi(raw.difference(unary_union(sp.cuts))).geoms) if sp.cuts else len(raw.geoms)
@@ -326,10 +332,6 @@ class Radial(Mode):
             for i in sorted({g.lobe for g in rings} - held):
                 ctx.errors.append(f"spine: no ring of lobe {i + 1} can reach the spine without cutting it apart — "
                                   f"move that axis so one of its rings sits nearer the neck, or add a ring")
-        if not rings:
-            ctx.errors.append("no ring slices — nothing holds the half-slices")
-        ctx.cover_r = max(max(a[2] for a in axes) / max(1, nr), math.pi * max(ctx.ext) / (4 * n)) + t
-        return halves + rings + spine_sl
 
     def crossing_fix(self, ctx, sl, point):
         if sl.group != "R":

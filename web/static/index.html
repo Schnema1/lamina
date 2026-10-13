@@ -875,11 +875,25 @@ function showGhost(modelUrl){
   if(ghostUrl?.startsWith('blob:'))URL.revokeObjectURL(ghostUrl);   // the browser build hands over the mesh itself
   ghostUrl=modelUrl; ghost.clear();
   new STLLoader().load(modelUrl,g=>{
+    smoothNormals(g);
     ghost.clear(); ghost.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0x8899aa,transparent:true,opacity:.18,depthWrite:false})));
     ghost.visible=$('#ghost').checked;
     if(!fitted&&!parts.children.length)fitView();       // not `fitted = true`: the parts get their own fit when they land
     dirty=true});
 }
+// An STL carries one normal per triangle, so the model was shaded flat and looked faceted even when it was never
+// remeshed. Shade across the triangles instead: each corner of a triangle takes the mean of the normals of the
+// triangles meeting at that point that are within `crease` degrees of its own (a cube's corner stays a corner,
+// and a flat base does not tilt the flank above it). What three.js's toCreasedNormals does, without its module.
+function smoothNormals(g,crease=30){
+  const p=g.attributes.position.array,n=g.attributes.normal.array,at=new Map(),cos=Math.cos(crease*Math.PI/180);
+  const key=i=>`${p[i].toFixed(3)},${p[i+1].toFixed(3)},${p[i+2].toFixed(3)}`;
+  for(let i=0;i<p.length;i+=3){const k=key(i);(at.get(k)||at.set(k,[]).get(k)).push(i)}
+  const out=new Float32Array(n.length);
+  for(let i=0;i<p.length;i+=3){let x=0,y=0,z=0;
+    for(const j of at.get(key(i)))if(n[i]*n[j]+n[i+1]*n[j+1]+n[i+2]*n[j+2]>cos){x+=n[j];y+=n[j+1];z+=n[j+2]}
+    const l=Math.hypot(x,y,z)||1;out[i]=x/l;out[i+1]=y/l;out[i+2]=z/l}
+  g.setAttribute('normal',new THREE.BufferAttribute(out,3))}
 function mergeGeos(geos){
   const ngs=geos.map(g=>g.index?g.toNonIndexed():g),n=ngs.reduce((a,g)=>a+g.attributes.position.array.length,0),pos=new Float32Array(n),nor=new Float32Array(n);let o=0;
   for(const g of ngs){pos.set(g.attributes.position.array,o);nor.set(g.attributes.normal.array,o);o+=g.attributes.position.array.length}

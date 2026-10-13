@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools, math
 import numpy as np
 import shapely
+import shapely.affinity
 import trimesh
 from shapely.geometry import Polygon, MultiPolygon, Point, LineString, MultiLineString, box
 from shapely.ops import unary_union
@@ -38,16 +39,57 @@ def rot_about(axis, deg) -> np.ndarray:
     return trimesh.transformations.rotation_matrix(math.radians(deg), axis)[:3, :3]
 
 
-def to_local(M, pts) -> np.ndarray:
+def to_local(M, pts, z=False) -> np.ndarray:
+    """World points in M's frame: x, y on the slice (and its z, with `z`)."""
     pts = np.atleast_2d(np.asarray(pts, float))
     p = np.c_[pts, np.ones(len(pts))]
-    return (np.linalg.inv(M) @ p.T).T[:, :2]
+    return (np.linalg.inv(M) @ p.T).T[:, :3 if z else 2]
 
 
 def to_world(M, pts2d, z=0.0) -> np.ndarray:
     pts2d = np.atleast_2d(np.asarray(pts2d, float))
     p = np.c_[pts2d, np.full(len(pts2d), z), np.ones(len(pts2d))]
     return (M @ p.T).T[:, :3]
+
+
+def into(a_M, b_M, geom):
+    """Geometry in b's local plane → a's local plane (both z = 0; exact for parallel frames, close enough for small tilts)."""
+    T = np.linalg.inv(a_M) @ b_M
+    return shapely.affinity.affine_transform(geom, [T[0, 0], T[0, 1], T[1, 0], T[1, 1], T[0, 3], T[1, 3]])
+
+
+def min_dims(poly):
+    """Side lengths of the minimum rotated bounding rectangle (w, h), sorted: the hull measured across each of its own
+    edge directions, keeping the smallest box. Not GEOS's minimum_rotated_rectangle, which comes back as a flat line
+    when the hull has several points on one straight edge (slot corners on a slanted side do that) — a 120 × 660 mm
+    part measured 0.0 × 125, failed as "too thin" and was never split to fit the sheet."""
+    hull = poly.convex_hull
+    if hull.geom_type != "Polygon":                        # a point or a line: no width
+        return 0.0, float(hull.length)
+    h = np.asarray(hull.exterior.coords)
+    e = np.diff(h, axis=0); e = e[np.hypot(*e.T) > 1e-12]; e /= np.hypot(*e.T)[:, None]
+    w, t = np.ptp(h @ e.T, axis=0), np.ptp(h @ np.c_[-e[:, 1], e[:, 0]].T, axis=0)
+    k = int(np.argmin(w * t))
+    return tuple(sorted((float(w[k]), float(t[k]))))
+
+
+def min_rect_angle(geom):
+    """The turn (degrees) that lays the long side of GEOS's minimum rotated rectangle along x: a starting angle for
+    nesting and for a label along a part. Where that rectangle degenerates to a line (see min_dims) 0 is as good a
+    start as any, so this does not go through min_dims."""
+    r = geom.minimum_rotated_rectangle
+    if r.geom_type != "Polygon":
+        return 0.0
+    c = np.asarray(r.exterior.coords); e = c[1:] - c[:-1]
+    i = int(np.argmax(np.hypot(e[:, 0], e[:, 1])))
+    return -math.degrees(math.atan2(e[i, 1], e[i, 0]))
+
+
+def even_odd(polys):
+    """Rings sorted into faces and holes the even-odd way: a ring inside a ring is a hole, one inside that a face
+    again — the symmetric difference of them all (a glyph's counters, a section's loops where there is no rtree to
+    sort them). An invalid ring (a contour touching itself) is mended first."""
+    return functools.reduce(lambda a, b: a.symmetric_difference(b), (g if g.is_valid else g.buffer(0) for g in polys))
 
 
 def section_polygons(mesh: trimesh.Trimesh, M: np.ndarray) -> MultiPolygon:
@@ -60,11 +102,11 @@ def section_polygons(mesh: trimesh.Trimesh, M: np.ndarray) -> MultiPolygon:
         polys = list(path2d.polygons_full)
     except ImportError:                                   # trimesh sorts loops into holes with rtree; the browser build
         loops = [p for p in path2d.polygons_closed if p is not None and p.area > 1e-6]   # has none: even-odd fill is the same
-        polys = [functools.reduce(lambda a, b: a.symmetric_difference(b), loops)] if loops else []
+        polys = [even_odd(loops)] if loops else []
     polys = [p for p in polys if p.is_valid and p.area > 1e-6]
     if not polys:
         return MultiPolygon()
-    out = unary_union([unripple(p, mesh.metadata.get("lamina_pitch", 0)) for p in polys])
+    out = unary_union(polys)
     # A flat wall is two triangles, and the plane crossing their diagonal leaves a point on the straight edge — at a
     # different place on every layer. The same cube with a hole came out as 100 outlines alike in shape and unlike in
     # points, and intersecting them for the stack's aligned dowels kept every point of every layer: 393,370 vertices,
@@ -74,50 +116,6 @@ def section_polygons(mesh: trimesh.Trimesh, M: np.ndarray) -> MultiPolygon:
     return as_multi(lean if lean.is_valid and not lean.is_empty else out)
 
 
-def unripple(geom, pitch: float):
-    """Take the grid out of an outline cut from a remeshed model.
-
-    A voxel pass leaves a ripple along every curve about a fifth of the pitch deep — not a staircase (the smoothing
-    in `modify_form` takes the corners off) but a bumpy edge, and on a 180 mm model at 1.5 mm voxels that is a
-    visible 1.3 mm of wobble on what was a smooth curve. Neither a finer grid nor more smoothing passes reach it: the
-    ripple is the grid itself, and the grid is bounded by memory. So it comes off here, where the curve is a line
-    rather than a surface — a moving average around the ring over about five voxels of arc, which is longer than the
-    ripple and far shorter than any shape the model is meant to have. Measured on the egg at `round 2`: the outline's
-    spread about the original fell from 0.285 mm to 0.092 mm, and 1.27 mm of peak-to-trough to 0.42 mm, costing
-    0.07 mm of size. Only for meshes the voxel pass built: `pitch` is 0 for a model sliced as it was modelled.
-
-    Takes a single polygon or several: the browser build has no rtree, so it sorts its loops with one
-    symmetric_difference and arrives here with a MultiPolygon where the desktop build passes them one at a time.
-    """
-    if pitch <= 0:
-        return geom
-    out = []
-    for poly in getattr(geom, "geoms", [geom]):
-        if not isinstance(poly, Polygon) or poly.is_empty:
-            out.append(poly)                            # a stray line or point: not ours to smooth, not ours to drop
-            continue
-        rings = [_ring_average(np.asarray(poly.exterior.coords), pitch)]
-        rings += [_ring_average(np.asarray(r.coords), pitch) for r in poly.interiors]
-        smooth = Polygon(rings[0], rings[1:]).buffer(0)
-        out.append(smooth if smooth.is_valid and not smooth.is_empty else poly)
-    return unary_union(out) if len(out) != 1 else out[0]
-
-
-def _ring_average(ring: np.ndarray, pitch: float) -> np.ndarray:
-    """Moving average around a closed ring, over `5 · pitch` of arc. A ring too short to hold the window is left as
-    it is — a part a few voxels across is all corner, and averaging it away would cost the part its shape."""
-    c = np.asarray(ring)[:-1]
-    seg = float(np.median(np.hypot(*np.diff(np.vstack([c, c[:1]]), axis=0).T))) if len(c) > 2 else 0.0
-    window = int(round(5 * pitch / seg)) if seg > 0 else 0
-    window += window % 2 == 0                                  # odd, so the average stays centred on its point
-    if window < 3 or len(c) < 3 * window:
-        return ring
-    k = np.ones(window) / window
-    pad = np.concatenate([c[-window:], c, c[:window]])
-    sm = np.stack([np.convolve(pad[:, i], k, mode="same")[window:window + len(c)] for i in (0, 1)], axis=1)
-    return np.vstack([sm, sm[:1]])
-
-
 def as_multi(g) -> MultiPolygon:
     if g is None or g.is_empty:
         return MultiPolygon()
@@ -125,7 +123,7 @@ def as_multi(g) -> MultiPolygon:
         return MultiPolygon([g])
     if isinstance(g, MultiPolygon):
         return g
-    return MultiPolygon([p for p in getattr(g, "geoms", []) if isinstance(p, Polygon)])
+    return MultiPolygon([p for p in shapely.get_parts(g) if isinstance(p, Polygon)])
 
 
 def as_lines(g) -> MultiLineString:
@@ -135,7 +133,7 @@ def as_lines(g) -> MultiLineString:
         return MultiLineString([g])
     if isinstance(g, MultiLineString):
         return g
-    return MultiLineString([l for l in getattr(g, "geoms", []) if isinstance(l, LineString)])
+    return MultiLineString([l for l in shapely.get_parts(g) if isinstance(l, LineString)])
 
 
 def label_box(text, font):
@@ -147,17 +145,39 @@ def label_box(text, font):
 def label_spot(mp, w, h, prefer=None):
     """Where to put a w × h label on a part: the centre of a block that lies inside `prefer` (when given) or `mp` —
     tried upright and turned 90° — or, when no whole block fits, the widest spot there is, so a label is never left
-    off. Returns (x, y, rotation in degrees). Shared by the sheet placement and the per-piece export so both put a
-    label in the same place."""
+    off. Returns (x, y, rotation in degrees)."""
+    mp = as_multi(mp)
+    if mp.is_empty:
+        return (0.0, 0.0, 0)
     for cand in (prefer, mp):
         if cand is None or cand.is_empty:
             continue
         spot = _fits_block(cand, w, h)
         if spot:
             return spot
-    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in as_multi(mp).geoms), key=lambda c: c.length, default=None)
-    p = best.coords[0] if best is not None else as_multi(mp).representative_point().coords[0]
-    return (float(p[0]), float(p[1]), 0)
+    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in mp.geoms), key=lambda c: c.length)
+    return (float(best.coords[0][0]), float(best.coords[0][1]), 0)
+
+
+def inside_spot(region, guides, w, h):
+    """Where to engrave a w × h label on a part: inside the next layer's outline when the part carries one (`guides`,
+    the stacked guide lines, in `region`'s frame), so the layer glued on top hides it, otherwise on the part's own
+    widest spot. The next layer's footprint is rebuilt from the guide lines — the ring they enclose — and only used if
+    the label fits inside it. A label that fits nowhere is still given the part's widest clearance rather than left
+    off, so the maker trims it in the laser software instead of finding a part they cannot place. The sheet placement
+    and the per-piece export both come through here, so a part's label lands in the same place in both."""
+    region = as_multi(region)
+    cover = None
+    if guides:
+        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
+        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
+        # not covered, so a label there would show through
+        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
+        if loops:
+            under = shapely.union_all(loops).intersection(region)
+            if not under.is_empty:
+                cover = under
+    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part
 
 
 def _fits_block(mp, w, h):
@@ -260,7 +280,6 @@ def dowel_leverage(piece, pts) -> float:
 
 def poly_coords(mp: MultiPolygon) -> list:
     """[[exterior, hole, hole...], ...] as plain lists for JSON (bulk coordinate extraction: panels have 100s of holes)."""
-    import shapely
     out = []
     for p in mp.geoms:
         rings = shapely.get_rings(p)

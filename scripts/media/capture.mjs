@@ -109,9 +109,9 @@ const clip = async (name, n, step) => {
 
 // ---------------------------------------------------------------- scenes
 // the head scan comes face-up with the neck along -y: rotate x 90° stands it up facing the camera
-// round 3 drops the thin bits (ears, neck) no slot can hold — at 1 mm voxels plus Taubin smoothing, so the outlines
-// stay as smooth as the scan instead of stair-stepping
-const HEAD = { rotate: [90, 0, 0], round: 3, shrinkwrap: 1.0, smooth: 6 };
+// round 3 drops the thin bits (ears, neck) no slot can hold; the grid it picks itself (1.7 mm) keeps the scan's
+// detail now that the remesh measures the surface instead of stepping it, and takes a quarter of the time of 1 mm
+const HEAD = { rotate: [90, 0, 0], round: 3, smooth: 6 };
 // interlocked head: the three edge slices through the ears keep a bridge under 2 mm; grown as the fix buttons do
 const INTERLOCKED = { p: { ...HEAD, nx: 12, ny: 9 }, fix: {} };          // the thin bridges left are grown by heal()
 const S = {};
@@ -123,11 +123,12 @@ S.hero = async () => {        // radial head, face forward: also the model tab a
     await tab("export"); await set("pr_size", 280); await sleep(400); await shot("export");   // 280 mm prototype: fits the H2C bed
     await tab("technique");
 };
-S.stacked = async () => {     // the rearing horse statue in side profiles across its width, a gap between, square dowels at random points
+S.stacked = async () => {     // the rearing horse statue in side profiles across its width, square dowels at random points
     await example("horse_statue"); await mode("stacked"); await tab("technique");   // layered up its height, the body over the slanted hind legs is held by nothing
     // the stack 1 mm off centre: where a layer only grazes the surface it leaves a speck no dowel can reach, and
-    // this position leaves none (the preset); the steps change the hole's shape, which keeps every piece held
-    await params({ axis: "y", size: [0, 0, 260], center: [0, 1, 0], connect: "dowel", dowel_shape: "square", placement: "random", space: 4, dowel_d: 2, n_points: 2, round: 3, thicken: 1 }); await heal();
+    // this position leaves none (the preset); no gap: across one, the statue's thin parts float now that the remesh
+    // no longer fattens them; the steps change the hole's shape, which keeps every piece held
+    await params({ axis: "y", size: [0, 0, 260], center: [0, 1, 0], connect: "dowel", dowel_shape: "square", placement: "random", space: 0, dowel_d: 2, n_points: 2, round: 3, thicken: 1 }); await heal();
     await view(-55, 14, 1.05, 1.0); await project("stacked");      // assembled, never exploded: a clip must show the finished object
     await techClip("stacked", -55, 14, 1.0, [["round holes", () => set("dowel_shape", "round")], ["hexagon", () => set("dowel_shape", "hexagon")],
         ["cross", () => set("dowel_shape", "cross")], ["square", () => set("dowel_shape", "square")]]);
@@ -146,7 +147,8 @@ S.radial = async () => {
     await example("head_igea"); await mode("radial"); await tab("technique");
     await params({ ...HEAD, count: 10, ring_count: 6 }); await heal();
     await view(-50, 18, 1.05, 1.0); await project("radial");
-    await techClip("radial", -50, 18, 1.0, [["6 slices", () => set("count", 6)], ["14 slices", () => set("count", 14)], ["10 slices", () => set("count", 10)],
+    // 5 to 8 slices leave a ring's slot path through a vertical slice twice (the neck's hollow): not shown
+    await techClip("radial", -50, 18, 1.0, [["14 slices", () => set("count", 14)], ["10 slices", () => set("count", 10)],
         ["3 rings", () => set("ring_count", 3)], ["9 rings", () => set("ring_count", 9)], ["6 rings", () => set("ring_count", 6)]]);
 };
 // radial with an axis per lobe: the dumbbell's two balls, the plane between them at the neck (the bundled presets)
@@ -186,8 +188,10 @@ S.curve = async () => {       // the horse is long along y; the curve follows th
         [[-2.8, -100.1, -11], [-5, -134.2, -125]], [[52, -83.1, -15], [54.9, -101, -125]]];
     await fix({ curve: CURVE, branches: BRANCHES }); await heal();
     await view(-70, 16, 0.9, 1.0); await project("curve");
-    await techClip("curve", -70, 16, 0.9, [["8 ribs", () => set("count", 8)], ["12 ribs", () => set("count", 12)], ["20 ribs", () => set("count", 20)],
-        ["head point up", () => fix({ curve: [...CURVE.slice(0, -1), [136, 92]] })], ["head point back", () => fix({ curve: CURVE })]]);
+    // 12 ribs leave a rib floating and the head point at 136 puts the spine's material in a rib's slot path: 13 and
+    // 130 are the neighbours that come out clean on the exact remesh
+    await techClip("curve", -70, 16, 0.9, [["8 ribs", () => set("count", 8)], ["13 ribs", () => set("count", 13)], ["20 ribs", () => set("count", 20)],
+        ["head point up", () => fix({ curve: [...CURVE.slice(0, -1), [130, 92]] })], ["head point back", () => fix({ curve: CURVE })]]);
 };
 S.folded = async () => {      // the cow mesh is y-up: rotate x 90° stands it up
     await example("cow"); await mode("folded"); await tab("technique");

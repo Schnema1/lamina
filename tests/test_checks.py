@@ -9,6 +9,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 
 
+def test_a_warning_a_technique_leaves_on_a_slice_reaches_the_plan():
+    """Stacked, aligned dowels, a dowel typed far outside the model: the technique says so on a slice while it builds,
+    and the checks that run after it keep the message (they used to wipe every slice's warnings first)."""
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off", "placement": "aligned", "dowels": [[500, 500]]})
+    assert any("outside the material" in w for sl in plan["slices"] for w in sl["warnings"]), [sl["warnings"] for sl in plan["slices"]]
+
+
 def test_no_crossing_slice_error_and_autofix_add_resolves_it():
     """curve mode with spines=0 gives every rib nothing to cross (no spine slices exist at all), so
     check_slice()'s `sl.group in ("X", "Y") and not sl.engages` branch fires on every rib."""
@@ -41,7 +48,7 @@ def test_a_piece_nothing_can_hold_stays_on_the_plan_with_its_fixes():
     plan = build(EXAMPLES / "horse.stl", "stacked", {
         "thickness": 3, "axis": "z", "size": [0, 300, 0], "connect": "dowel", "dowel_shape": "square", "placement": "random",
         "space": 6, "dowel_d": 3, "n_points": 2, "round": 3, "thicken": 1, "margin": 3})
-    top = next(s for s in plan["slices"] if s["label"] == "Z-29")
+    top = plan["slices"][-1]                           # Z-28: the remesh no longer grows the model by most of a voxel
     assert top["pieces"] and any("floats" in e for e in top["errors"]), top["errors"]
     titles = [o["title"] for f in top["fixes"] for o in f["options"]]
     assert any("gap 0" in t for t in titles), titles

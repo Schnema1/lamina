@@ -22,7 +22,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 | Tool Diameter → Dog Bone | ✅ | `tool_d`, `relief` = square / dogbone / tbone_h / tbone_v; applies to interlocked, curve and radial core slots |
 | Object Size: Original Size button | ✅ | Model tab → original size |
 | Object Size: uniform / per-axis | ✅ | `scale`, `size=[x,y,z]` (one value = uniform fit) |
-| Modify Form: Hollow / Thicken / Shrinkwrap | ✅ | one voxel pass: `shrinkwrap` (pitch), `hollow` (wall), `thicken` (dilate); plus `round` (opening + closing) and `smooth` (Taubin). The grid follows the feature you ask for rather than the size of the model, and the steps a grid always leaves are smoothed off, so a smooth model comes back smooth (measured: `round 2` on the egg went from 13 % of edges over 45° to 0 %) |
+| Modify Form: Hollow / Thicken / Shrinkwrap | ✅ | one pass on a signed distance field: `shrinkwrap` (grid pitch), `hollow` (wall), `thicken` (grow), `round` (opening + closing), all exact in mm; plus `smooth` (Taubin). Marching cubes on the field puts the surface where it really is, so a smooth model comes back smooth (measured on the blob: the angle between neighbouring faces at the 95th percentile is 4° against the model's 6°, the surface within 0.03 mm of the original; the binary voxel grid before gave 21° and 1.6 mm) |
 | Kerf compensation (extra) | ✅ | `kerf` |
 
 ## §3 Construction techniques
@@ -184,7 +184,12 @@ off the spine, stays off it and is held by its own half-slices; only when no rin
 the job say so. Its rings share the neighbours' lines, so they go on the spine first (a warning says the slots
 overlap).
 
-Tests to add next (what the coverage report shows untested, 88 % of core + web at the time of writing): the
-`lines` connector placement of stacked, the fix options of the assembly checks (`core/checks.py` 300–320), the
-CadQuery import (needs the `cad` extra in CI), the EPS writer's label path.
+Tests to add next (the 0.2.4 coverage run, and the 2026-10-13 review of the suite): interlocked is the least covered
+technique (47 % of `core/modes/interlocked.py`; no test measures a slot's width, depth or dogbone against the
+thickness and slot offset, and `crossing_fix` / `hold` are never entered); the `lines` connector placement of stacked;
+the fix options of the assembly checks and `check_collisions` on a hand-made overlap; a per-piece DXF and EPS parsed
+back (only the sheet SVG and one DXF are parsed today); units other than mm in the DXF header and EPS; the CadQuery
+import (needs the `cad` extra in CI). `tests/test_unfold.py`'s CASES table of real-mesh unfolds only runs by hand
+(`python tests/test_unfold.py`), never under pytest: parametrize it. The suite has no `conftest.py`: `EXAMPLES`, the
+`jobs` fixture and the piece / error flatteners are redefined per file.
 

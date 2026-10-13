@@ -11,24 +11,49 @@ import shapely
 import trimesh
 from shapely.geometry import Point
 
-from core.geometry import dowel_leverage, section_polygons, unripple
+from core.geometry import dowel_leverage, section_polygons
 from core.plan import MODES, build, coerce_params, load_mesh, reuse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 
 
-def test_thicken_smaller_than_a_voxel_does_not_fill_the_box():
-    """A 400 mm cone remeshes at 3.3 mm voxels; thicken 1 mm rounds to no whole voxel. That must dilate by one voxel,
-    not (scipy's reading of iterations=0) until the whole padded volume is solid."""
+def test_thicken_smaller_than_a_grid_step_acts_exactly():
+    """A 400 mm cone remeshes on a 3.3 mm grid; thicken 1 mm is under one step. On the binary grid that acted as a
+    whole step (3.3 mm, and the note said so); on the distance field it is 1 mm. The cone's base edge and its tip
+    are sharp, and marching cubes takes up to half a step off a sharp feature (the base came out 0.8 mm wider, not
+    2; the tip a step short), so the measure is a cut through the cone's flank, which is a surface: 1 mm out along
+    its normal, which on a flank at 1:2 is 1.12 mm wider on each side."""
     plan = build(EXAMPLES / "cone.stl", "stacked",
                  {"size": [0, 0, 400], "thicken": 1, "connect": "none", "distribution": "count", "count": 6, "autofix": "off"})
     widths = [sl["extents"][0] for sl in plan["slices"]]
     assert min(widths) < 0.6 * max(widths)          # still a cone: the top slice is far narrower than the base
-    assert plan["bbox"][2] < 415                    # one voxel of growth, not the padding
-    # …which is more than the 1 mm asked: the note says how much it really grew, and it matches the box
-    acted = float(re.search(r"thicken 1 mm acted as ([\d.]+) mm", " ".join(plan["notes"])).group(1))
-    assert acted > 3 and abs((plan["bbox"][2] - 400) / 2 - acted) < 1.5
+    assert 398.5 < plan["bbox"][2] < 402.5
+    plain = load_mesh(EXAMPLES / "cone.stl", coerce_params(MODES["stacked"], {"size": [0, 0, 400]}), [], "stacked")
+    thick = load_mesh(EXAMPLES / "cone.stl", coerce_params(MODES["stacked"], {"size": [0, 0, 400], "thicken": 1}), [], "stacked")
+
+    def width_at(mesh, z):                            # the cut's reach in x at a height above the base
+        M = np.eye(4); M[2, 3] = mesh.bounds[0][2] + z
+        return section_polygons(mesh, M).bounds[2]
+
+    grew = width_at(thick, 201) - width_at(plain, 200)     # the thickened base sits 1 mm lower: the same height
+    assert abs(grew - 1.12) < 0.2, grew
+
+
+def test_round_removes_a_thin_fin_and_rounds_the_corners_to_the_radius_asked(tmp_path):
+    """A 60 mm box with a 3 mm fin standing on top, rounded 4 mm: the fin goes (thinner than the ball), and the
+    box's square corners come back as fillets of the ball's radius, 2 mm — the corner point of the cut outline sits
+    2·(√2−1) = 0.83 mm inside where the square's corner was, plus a flat of about half a grid step (2 mm grid): the
+    one marching-cubes pass over a sharp corner, the eroded box's, cuts it by that much, and the fillet is drawn
+    about the cut. The binary grid gave 3·pitch = 6 mm corners for any value asked."""
+    box = trimesh.creation.box((60, 60, 60))
+    fin = trimesh.creation.box((3, 40, 20)); fin.apply_translation([0, 0, 40])
+    trimesh.util.concatenate([box, fin]).export(tmp_path / "finned.stl")
+    p = coerce_params(MODES["stacked"], {"thickness": 3, "round": 4})
+    mesh = load_mesh(tmp_path / "finned.stl", p, [], "stacked")
+    assert abs(mesh.extents[2] - 60) < 0.5, mesh.extents    # the fin is gone, the box is not thinner
+    corner = Point(30, 30).distance(mid_outline(mesh))
+    assert 0.83 - 0.3 < corner < 0.83 + 1.2, corner
 
 
 def test_a_model_saved_in_metres_says_so(tmp_path):
@@ -39,6 +64,25 @@ def test_a_model_saved_in_metres_says_so(tmp_path):
     assert plan["counts"]["slices"] == 0 and any("only 0.1 mm across" in n for n in plan["notes"])
     plan = build(tmp_path / "cube.stl", "stacked", {"connect": "none", "thickness": 3, "size": [100, 0, 0]})
     assert plan["counts"]["slices"] == 33 and not any("mm across" in n for n in plan["notes"])
+
+
+def test_a_closed_cavity_is_solid_and_a_doubled_surface_is_one(tmp_path):
+    """A scan with an inner surface: hollow measures its wall from the outside — one 3 mm wall at radius 27, not a
+    second void sheet carved in the middle of the 7 mm the model already has. And a model exported twice over
+    itself (watertight, and even-odd reads it as empty) is one surface: thicken 1 grows it by 1, not a crash.
+    Parts that overlap in the file are one solid: see the curve-branch T in test_modes."""
+    outer, inner = trimesh.creation.icosphere(4, 30), trimesh.creation.icosphere(4, 23)
+    inner.invert()
+    trimesh.util.concatenate([outer, inner]).export(tmp_path / "shell.stl")
+    mesh = load_mesh(tmp_path / "shell.stl", coerce_params(MODES["stacked"], {"thickness": 3, "hollow": 3}), [], "stacked")
+    assert len(mesh.split(only_watertight=False)) == 2, "one outer and one inner surface"
+    radii = np.linalg.norm(mesh.vertices, axis=1)
+    assert abs(radii.max() - 30) < 0.3 and abs(radii.min() - 27) < 0.3, (radii.min(), radii.max())
+    assert not ((radii > 27.5) & (radii < 29.5)).any(), "a void sheet inside the wall"
+
+    trimesh.util.concatenate([outer, outer.copy()]).export(tmp_path / "doubled.stl")
+    thick = load_mesh(tmp_path / "doubled.stl", coerce_params(MODES["stacked"], {"thickness": 3, "thicken": 1}), [], "stacked")
+    assert abs(thick.extents[0] - 62) < 0.3, thick.extents
 
 
 def test_a_union_that_left_a_seam_is_mended_not_remeshed():
@@ -153,13 +197,13 @@ def mid_outline(mesh):
     return section_polygons(mesh, M)
 
 
-@pytest.mark.parametrize(("setting", "value", "was", "was_pt"), [("round", 2, 0.285, 1.27), ("shrinkwrap", 2, 0.369, 1.47),
-                                                                ("thicken", 2, 0.305, 1.17), ("hollow", 6, 0.537, 2.29)])
-def test_modify_form_leaves_a_smooth_curve_smooth(setting, value, was, was_pt):
-    """Reported as "the curves get destroyed if we touch any of those parameters". The voxel grid leaves a ripple
-    about a fifth of a voxel deep along every curve — not steps, a wobbly edge, which is why counting sharp corners
-    missed it. `was` / `was_pt` are what each setting measured on the egg before `unripple`: the spread of the cut
-    outline about the as-modelled curve, and how far it wandered peak to trough on a 180 mm part."""
+@pytest.mark.parametrize(("setting", "value", "offset"), [("round", 2, 0), ("shrinkwrap", 2, 0), ("thicken", 2, 2), ("hollow", 6, 0)])
+def test_modify_form_leaves_a_smooth_curve_smooth(setting, value, offset):
+    """Reported twice: "the curves get destroyed if we touch any of those parameters", then "round creates a very
+    bumpy surface, pixelated, low polygon". The binary voxel grid left a ripple about a fifth of a voxel deep along
+    every curve and moved the whole surface out by most of a voxel. On the distance field the cut outline of the
+    egg sits where the model's own outline is — `offset` mm out for thicken — to a few hundredths of a millimetre
+    (measured: spread 0.01–0.02 mm, peak to trough 0.1–0.2 mm, on a 180 mm part)."""
     p = coerce_params(MODES["stacked"], {"thickness": 3})
     plain = load_mesh(EXAMPLES / "egg.stl", p, [], "stacked")
     edge = mid_outline(plain).boundary
@@ -167,36 +211,25 @@ def test_modify_form_leaves_a_smooth_curve_smooth(setting, value, was, was_pt):
     q = coerce_params(MODES["stacked"], {"thickness": 3, setting: value})
     cut = mid_outline(load_mesh(EXAMPLES / "egg.stl", q, [], "stacked"))
     d = np.array([edge.distance(Point(v)) for g in cut.geoms for v in np.asarray(g.exterior.coords)])
-    # the mean is the material the setting adds or takes away, which is the point of it; the spread is the ripple
-    assert d.std() < 0.6 * was, f"outline wobbles by {d.std():.3f} mm about the original curve (was {was} mm)"
-    assert d.max() - d.min() < 0.6 * was_pt, f"outline wanders {d.max() - d.min():.2f} mm peak to trough (was {was_pt} mm)"
+    assert abs(d.mean() - offset) < 0.15, f"outline sits {d.mean():.3f} mm from the original curve, {offset} asked"
+    assert d.std() < 0.05, f"outline wobbles by {d.std():.3f} mm about the original curve"
+    assert d.max() - d.min() < 0.4, f"outline wanders {d.max() - d.min():.2f} mm peak to trough"
 
 
-def test_the_outline_smoothing_survives_the_browser_s_way_of_sorting_loops(monkeypatch):
+def test_a_remeshed_model_sections_the_browser_s_way_of_sorting_loops(monkeypatch):
     """The browser build has no rtree, so `polygons_full` raises and `section_polygons` sorts its loops with one
     symmetric_difference — arriving with a MultiPolygon where the desktop build passes one polygon at a time. That
-    difference got past the unit tests and failed the published build with
-    `AttributeError: 'MultiPolygon' object has no attribute 'exterior'`."""
+    difference got past the unit tests once and failed the published build on a remeshed model."""
     @property
     def no_rtree(self):
         raise ImportError("rtree is not available (as in the browser build)")
 
     monkeypatch.setattr(trimesh.path.Path2D, "polygons_full", no_rtree)
     mesh = load_mesh(EXAMPLES / "bunny.stl", coerce_params(MODES["stacked"], {"thickness": 3, "round": 2}), [], "stacked")
-    assert mesh.metadata.get("lamina_pitch"), "this test is only meaningful on a remeshed model"
+    assert len(mesh.faces) != len(trimesh.load(EXAMPLES / "bunny.stl").faces), "this test is only meaningful on a remeshed model"
     assert not mid_outline(mesh).is_empty
     plan = build(EXAMPLES / "bunny.stl", "stacked", {"thickness": 3, "round": 2, "distribution": "count", "count": 8})
     assert plan["counts"]["parts"] > 0 and not plan["errors"], plan["errors"]
-
-
-def test_a_model_sliced_as_modelled_is_not_smoothed_at_all():
-    """`unripple` is for outlines cut from a remeshed model and nothing else: no modify form, no voxel grid, so the
-    section must come through with every point exactly where the mesh put it."""
-    p = coerce_params(MODES["stacked"], {"thickness": 3})
-    mesh = load_mesh(EXAMPLES / "cube.stl", p, [], "stacked")
-    assert not mesh.metadata.get("lamina_pitch"), "nothing was asked for, so nothing should have been remeshed"
-    got = mid_outline(mesh)
-    assert got.equals(unripple(list(got.geoms)[0], 0)), "an outline with no grid behind it was altered"
 
 
 @pytest.mark.parametrize("shape", ["box", "tube"])
@@ -237,16 +270,18 @@ def dowels_by_level(plan):
     return level
 
 
-@pytest.mark.parametrize(("name", "over", "least"), [("bunny", {"hollow": 8}, 25), ("cow_spot", {}, 30),
+@pytest.mark.parametrize(("name", "over", "least"), [("bunny", {"thicken": 3}, 70), ("cow_spot", {}, 30),
                                                     ("cone", {}, 30), ("head_igea", {}, 36)])
 def test_a_stack_is_dowelled_through_without_holes_running_together(name, over, least):
-    """Two faults from one report. Too many, merged: eroding a hollowed layer leaves crumbs and each crumb was given
-    a pair of its own — 185 dowels on the hollowed bunny, two of them 0.6 mm apart. Too few: every pair chose a fresh
+    """Two faults from one report. Too many, merged: eroding a hollow layer leaves crumbs and each crumb was given
+    a pair of its own — 185 dowels on the bunny, two of them 0.6 mm apart. Too few: every pair chose a fresh
     spread, so on anything tapered the points walked inward a few mm a layer, landed in the wall of the hole above,
     and were dropped — the cone had 6 mm dowels 5.5 mm apart and half its layers with none at all.
 
-    `least` is a floor a little under what is measured now (bunny 31, cow 36, cone 34, head 38), so the test fails if
-    a change starts losing dowels again without pinning today's numbers exactly."""
+    The bunny is modelled as a 7 mm shell; thickened 3 mm its rings take a 6 mm dowel with a wall to spare (the
+    voxel pass used to fill it solid first, and `hollow 8` then made the rings). `least` is a floor a little under
+    what is measured now (bunny 97, cow 36, cone 34, head 38), so the test fails if a change starts losing dowels
+    again without pinning today's numbers exactly."""
     d, min_feature = 6, 2.0
     plan = build(EXAMPLES / f"{name}.stl", "stacked",
                  {"connect": "dowel", "dowel_d": d, "n_points": 2, "thickness": 3, "min_feature": min_feature,
@@ -384,8 +419,9 @@ def test_a_bunched_piece_is_offered_the_dowel_that_holds_it():
 
 def test_a_wall_too_thin_for_the_dowel_says_so():
     """Where a 6 mm dowel genuinely does not fit, placing none is right — but it has to be said, and any size it
-    names has to work when followed. A 6 mm wall holds no dowel at all, so no size is offered there; the hollowed
-    bunny is offered one, and following it fills every pair."""
+    names has to work when followed. A 6 mm wall holds no dowel at all, so no size is offered there; the cow hollowed
+    to an 8 mm wall is offered one, and following it fills the pairs — all but the odd strip narrower than the
+    median the size is read from (the voxel pass's walls were 3 mm thicker than asked, and hid that)."""
     thin = build(EXAMPLES / "cow_spot.stl", "stacked",
                  {"connect": "dowel", "dowel_d": 6, "n_points": 2, "thickness": 3, "hollow": 6,
                   "distribution": "count", "count": 20})
@@ -395,14 +431,18 @@ def test_a_wall_too_thin_for_the_dowel_says_so():
 
     job = {"connect": "dowel", "dowel_d": 6, "n_points": 2, "thickness": 3, "hollow": 8,
            "distribution": "count", "count": 20}
-    plan = build(EXAMPLES / "bunny.stl", "stacked", job)
+    plan = build(EXAMPLES / "cow_spot.stl", "stacked", job)
     said = [n for n in plan["notes"] if "set dowel_d to about" in n]
     assert said, plan["notes"]
     d = float(re.search(r"set dowel_d to about ([\d.]+) mm", said[0]).group(1))
     assert d < job["dowel_d"], f"offers {d} mm, no smaller than the {job['dowel_d']} mm that just failed"
-    after = build(EXAMPLES / "bunny.stl", "stacked", {**job, "dowel_d": d})
-    assert len(after["rods"]) > len(plan["rods"]), f"following the advice ({d} mm) placed no more dowels"
-    assert not [n for n in after["notes"] if "no connector" in n], "advice followed, layers still unconnected"
+    after = build(EXAMPLES / "cow_spot.stl", "stacked", {**job, "dowel_d": d})
+    assert len(after["rods"]) > 3 * len(plan["rods"]) + 20, f"following the advice ({d} mm) placed few more dowels"
+
+    def bare(plan):                                   # pairs the note says got no connector
+        return sum(int(re.search(r"(\d+) pair\(s\) of slices got no connector", n).group(1)) for n in plan["notes"] if "no connector" in n)
+
+    assert bare(after) <= bare(plan) // 4, (bare(plan), bare(after))      # measured 18 → 4
 
 
 def test_a_scan_with_a_hole_slices(tmp_path):

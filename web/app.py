@@ -40,18 +40,28 @@ CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{16,64}")  # long enough that nobody guess
 JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # no dots: these two build every path under jobs/
 
 
+def inside(base: pathlib.Path, *parts: str, status: int = 400) -> pathlib.Path:
+    """A path under `base` built from request values. The ids are matched against CLIENT_ID / JOB_ID first, which admit
+    neither a separator nor a dot; this then normalises the joined path and checks it still starts with the base — the
+    one shape of check a code scanner recognises, so every path under jobs/ is seen to be safe, not only known to be."""
+    p = os.path.normpath(os.path.join(base, *parts))
+    if not p.startswith(os.path.normpath(base) + os.sep):
+        raise HTTPException(status, "bad path")
+    return pathlib.Path(p)
+
+
 def client_dir(client: str) -> pathlib.Path:
     """The client's own directory. Its id is the only way in — nothing under jobs/ can be listed — so one person's
     models, cut files and session stay out of reach of everyone else on the server."""
     if not CLIENT_ID.fullmatch(client):
         raise HTTPException(400, "bad client id")
-    return JOBS / client
+    return inside(JOBS, client)
 
 
 def job_dir(client: str, job: str) -> pathlib.Path:
     if not JOB_ID.fullmatch(job):
         raise HTTPException(400, "bad job id")
-    return client_dir(client) / job
+    return inside(client_dir(client), job)
 
 
 TTL = float(os.environ.get("LAMINA_TTL_HOURS", 24)) * 3600  # 0 = never: only "clear my data" deletes
@@ -76,6 +86,12 @@ def model_name(jd):
     """The model's own file name: kept in name.txt for uploads (the copy itself is renamed), else the example's."""
     src = pathlib.Path((jd / "source.txt").read_text())
     return (jd / "name.txt").read_text().strip() if (jd / "name.txt").exists() else src.name
+
+
+def model_b64(jd):
+    """The uploaded model by name and as base64: what a project file embeds, so a cut file leads back to its model."""
+    src = pathlib.Path((jd / "source.txt").read_text())
+    return {"name": model_name(jd), "b64": base64.b64encode(src.read_bytes()).decode()}
 
 
 app = FastAPI(title="Lamina")
@@ -117,7 +133,7 @@ plan_module.report = _report
 
 
 @app.get("/api/progress")
-def progress(client: str, job: str = ""):
+def progress(client: str):
     """The stage the client's slice is in. Nothing readable (no build yet, or a stage half written) = empty."""
     try:
         return json.loads((client_dir(client) / "progress.json").read_text())
@@ -199,7 +215,7 @@ def slice_model(client: str = Form(...), mode: str = Form(...), params: str = Fo
     elif example:
         job = "ex_" + example
         jd = job_dir(client, job)  # validates the name before it reaches the filesystem
-        mpath = EXAMPLES / f"{example}.stl"
+        mpath = inside(EXAMPLES, f"{example}.stl")
         if not mpath.exists():
             raise HTTPException(400, "unknown example")
         jd.mkdir(exist_ok=True)
@@ -288,31 +304,55 @@ def project_file(client: str, jd: pathlib.Path, plan: dict) -> tuple[str, str]:
         "example": jd.name[3:] if example else "",
     }
     if not example and (jd / "source.txt").exists():
-        src = pathlib.Path((jd / "source.txt").read_text())
-        proj["model"] = {"name": model_name(jd), "b64": base64.b64encode(src.read_bytes()).decode()}
+        proj["model"] = model_b64(jd)
     return f"{design_name(plan)}.lamina.json", json.dumps(proj)
+
+
+def _plan(client: str, job: str) -> tuple[pathlib.Path, dict]:
+    """The job's directory and its plan: what every download is made from. No plan.json = no such job."""
+    jd = job_dir(client, job)
+    if not (jd / "plan.json").exists():
+        raise HTTPException(404)
+    return jd, json.loads((jd / "plan.json").read_text())
+
+
+def _zip(client: str, jd: pathlib.Path, plan: dict, make_files, name: str) -> Response:
+    """A download called `name`: the project file, then the files make_files(tmp) writes under tmp — a folder of its
+    own inside the job, gone once zipped — each under its path there."""
+    tmp = pathlib.Path(tempfile.mkdtemp(dir=jd))
+    try:
+        files = make_files(tmp)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(*project_file(client, jd, plan))
+            for f in files:
+                z.write(f, f.relative_to(tmp).as_posix())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _fmts(fmt: str) -> list[str]:
+    """The cut-file formats asked for, in the order asked, unknown ones dropped."""
+    return [f for f in fmt.split(",") if f in ("svg", "dxf", "pdf", "eps")]
+
+
+def _engrave(labels: str) -> str:
+    """How a printed part carries its label; anything but the three ways is a groove."""
+    return labels if labels in ("none", "groove", "hole") else "groove"
+
+
+def _scale(plan: dict, scale: float, size: float) -> float:
+    """`size` > 0 is the printed model's longest side in mm, and overrides `scale`."""
+    return size / max(plan["bbox"]) if size > 0 else scale
 
 
 @app.get("/api/job/{client}/{job}/export")
 def job_export(client: str, job: str, fmt: str = "svg,dxf", labels: int = 1, per_piece: int = 0, key: int = 1, units: str = ""):
-    jd = job_dir(client, job)
-    if not (jd / "plan.json").exists():
-        raise HTTPException(404)
-    plan = json.loads((jd / "plan.json").read_text())
-    plan = with_units(plan, units)
-    fmts = [f for f in fmt.split(",") if f in ("svg", "dxf", "pdf", "eps")]
-    tmp = pathlib.Path(tempfile.mkdtemp(dir=jd))
-    try:
-        files = export(plan, tmp, fmts, bool(labels), bool(per_piece), key=bool(key))
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            for f in files:
-                z.write(f, f.name)
-            z.writestr(*project_file(client, jd, plan))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    jd, plan = _plan(client, job)
+    plan, fmts = with_units(plan, units), _fmts(fmt)
     name = f"{design_name(plan)}_{plan['mode']}_{'pieces' if per_piece else 'sheets'}_{'-'.join(fmts)}{'' if labels else '_plain'}.zip"
-    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return _zip(client, jd, plan, lambda tmp: export(plan, tmp, fmts, bool(labels), bool(per_piece), key=bool(key)), name)
 
 
 @app.get("/api/job/{client}/{job}/source")
@@ -321,10 +361,7 @@ def job_source(client: str, job: str):
     jd = job_dir(client, job)
     if not (jd / "source.txt").exists():
         raise HTTPException(404)
-    src = pathlib.Path((jd / "source.txt").read_text())
-    import base64
-
-    return {"name": model_name(jd), "b64": base64.b64encode(src.read_bytes()).decode()}
+    return model_b64(jd)
 
 
 @app.get("/api/job/{client}/{job}/proto")
@@ -333,83 +370,44 @@ def job_proto(client: str, job: str, scale: float = 1.0, size: float = 0.0, labe
     `offset` printed mm wider than the material, label engraved as a groove or cut as a hole, `font` mm tall at
     least, plus plate.3mf holding every part as a separate named object (OrcaSlicer / PrusaSlicer can then arrange
     them individually) — zipped, with the project file and a README saying how the print differs from the job."""
-    jd = job_dir(client, job)
-    if not (jd / "plan.json").exists():
-        raise HTTPException(404)
-    plan = json.loads((jd / "plan.json").read_text())
-    if size > 0:
-        scale = size / max(plan["bbox"])
+    jd, plan = _plan(client, job)
+    scale = _scale(plan, scale, size)
     from core.solid import proto_plan, proto_set
 
     plan, note = proto_plan(plan, scale, min_thick, offset)  # thicker material and the print's own clearance, so the slots fit
-    tmp = pathlib.Path(tempfile.mkdtemp(dir=jd))
     try:
-        files = proto_set(plan, tmp, scale, labels if labels in ("none", "groove", "hole") else "groove", font, min_thick, note=note)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr(*project_file(client, jd, plan))
-            for f in files:
-                z.write(f, f.name)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{design_name(plan)}_{plan["mode"]}_proto_x{scale:.3g}.zip"'})
+        return _zip(client, jd, plan, lambda tmp: proto_set(plan, tmp, scale, _engrave(labels), font, min_thick, note=note),
+                    f"{design_name(plan)}_{plan['mode']}_proto_x{scale:.3g}.zip")
+    except RuntimeError as e:          # what the set cannot do on this computer, said in its own words (027: no scikit-image on 3.15)
+        raise HTTPException(400, str(e)) from None
 
 
 @app.get("/api/job/{client}/{job}/fit")
 def job_fit(client: str, job: str, scale: float = 1.0, size: float = 0.0, labels: str = "groove", font: float = 5.0, min_thick: float = 1.2, offset: float = 0.2, step: float = 0.1):
     """Print fit test: five small assemblies with the job's joints at print slot offsets around `offset` (printed
     mm), each part engraved with its value (see core.solid.fit_set) — plate.3mf, one STL per variant, README, zipped."""
-    jd = job_dir(client, job)
-    if not (jd / "plan.json").exists():
-        raise HTTPException(404)
-    plan = json.loads((jd / "plan.json").read_text())
-    if size > 0:
-        scale = size / max(plan["bbox"])
+    jd, plan = _plan(client, job)
+    scale = _scale(plan, scale, size)
     from core.solid import fit_set
 
-    tmp = pathlib.Path(tempfile.mkdtemp(dir=jd))
-    try:
-        files = fit_set(plan, tmp, scale, labels if labels in ("none", "groove", "hole") else "groove", font, min_thick, offset, step)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr(*project_file(client, jd, plan))
-            for f in files:
-                z.write(f, f.name)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{design_name(plan)}_{plan["mode"]}_printfit_x{scale:.3g}.zip"'})
+    return _zip(client, jd, plan, lambda tmp: fit_set(plan, tmp, scale, _engrave(labels), font, min_thick, offset, step),
+                f"{design_name(plan)}_{plan['mode']}_printfit_x{scale:.3g}.zip")
 
 
 @app.get("/api/job/{client}/{job}/fitcut")
 def job_fitcut(client: str, job: str, fmt: str = "svg,dxf", labels: int = 1, step: float = 0.1, units: str = ""):
     """Fit test as cut files at 1:1 for the real machine and material: five small assemblies with the job's joints
     at slot offsets around its own, a folder of sheets each (see core.solid.fit_sheets) — zipped with a README."""
-    jd = job_dir(client, job)
-    if not (jd / "plan.json").exists():
-        raise HTTPException(404)
-    plan = with_units(json.loads((jd / "plan.json").read_text()), units)
-    fmts = [f for f in fmt.split(",") if f in ("svg", "dxf", "pdf", "eps")]
+    jd, plan = _plan(client, job)
+    plan, fmts = with_units(plan, units), _fmts(fmt)
     from core.solid import fit_sheets
 
-    tmp = pathlib.Path(tempfile.mkdtemp(dir=jd))
-    try:
-        files = fit_sheets(plan, tmp, fmts, bool(labels), step)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr(*project_file(client, jd, plan))
-            for f in files:
-                z.write(f, f.relative_to(tmp).as_posix())
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{design_name(plan)}_{plan["mode"]}_fit_{"-".join(fmts)}.zip"'})
+    return _zip(client, jd, plan, lambda tmp: fit_sheets(plan, tmp, fmts, bool(labels), step), f"{design_name(plan)}_{plan['mode']}_fit_{'-'.join(fmts)}.zip")
 
 
 @app.get("/api/job/{client}/{job}/stl")
 def job_stl(client: str, job: str, part: str = ""):
-    jd = job_dir(client, job)
-    if not (jd / "plan.json").exists():
-        raise HTTPException(404)
-    plan = json.loads((jd / "plan.json").read_text())
+    _, plan = _plan(client, job)
     if part and part not in {pc["label"] for sl in plan["slices"] for pc in sl["pieces"]}:  # a label of the plan, or nothing: it names the file too
         raise HTTPException(404, "no such part")
     data = assembled(plan, part or None).export(file_type="stl")
