@@ -33,6 +33,7 @@ panel's fold lines, and there is a Discord.
 - **A Discord for Lamina.** Ask a question, share an idea or show what you made at
   [discord.gg/N66bCQxmt3](https://discord.gg/N66bCQxmt3), linked from the app's header, the landing page and the
   README. Bugs are still best sent with **report a problem**, which brings the model and settings along.
+- **The Docker image runs on Python 3.14**, the same Python the starters install, with the current uv.
 
 ### Fixed
 
@@ -71,10 +72,10 @@ panel's fold lines, and there is a Discord.
 - **What a technique says about a slice is shown.** A dowel typed outside every layer, a folded seam with no room for
   its joint, a joint made smaller to fit: these messages were written on the slice and then wiped before the checks
   ran, so they never reached the Checks tab. They show now.
-- **Installing Lamina on a fresh computer works again.** A brand-new Python came out this week that two of
+- **Installing Lamina on a fresh computer works again.** A brand-new Python came out this week that three of
   Lamina's libraries have no builds for yet, and the installer picked it, so the start script stopped with a
   compiler error. The starters now ask for the Python Lamina is tested on, and an install on the newest Python
-  leaves those two libraries out until they catch up (engraved labels on prototypes need one of them, and say so).
+  leaves those three libraries out until they catch up (engraved labels on prototypes need one of them, and say so).
   A copy already installed was never affected.
 - **One file per part keeps the lines.** The one-file-per-part export left every fold line off a folded panel, and
   would have left off the new guide line; both are in those files now, exactly as on the sheet.
