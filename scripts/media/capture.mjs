@@ -109,8 +109,7 @@ const clip = async (name, n, step) => {
 
 // ---------------------------------------------------------------- scenes
 // the head scan comes face-up with the neck along -y: rotate x 90° stands it up facing the camera
-// round 3 drops the thin bits (ears, neck) no slot can hold — at 1 mm voxels plus Taubin smoothing, so the outlines
-// stay as smooth as the scan instead of stair-stepping
+// round 3 drops the thin bits (ears, neck) no slot can hold — on a 1 mm grid, so the scan's own detail stays
 const HEAD = { rotate: [90, 0, 0], round: 3, shrinkwrap: 1.0, smooth: 6 };
 // interlocked head: the three edge slices through the ears keep a bridge under 2 mm; grown as the fix buttons do
 const INTERLOCKED = { p: { ...HEAD, nx: 12, ny: 9 }, fix: {} };          // the thin bridges left are grown by heal()
@@ -123,11 +122,12 @@ S.hero = async () => {        // radial head, face forward: also the model tab a
     await tab("export"); await set("pr_size", 280); await sleep(400); await shot("export");   // 280 mm prototype: fits the H2C bed
     await tab("technique");
 };
-S.stacked = async () => {     // the rearing horse statue in side profiles across its width, a gap between, square dowels at random points
+S.stacked = async () => {     // the rearing horse statue in side profiles across its width, square dowels at random points
     await example("horse_statue"); await mode("stacked"); await tab("technique");   // layered up its height, the body over the slanted hind legs is held by nothing
     // the stack 1 mm off centre: where a layer only grazes the surface it leaves a speck no dowel can reach, and
-    // this position leaves none (the preset); the steps change the hole's shape, which keeps every piece held
-    await params({ axis: "y", size: [0, 0, 260], center: [0, 1, 0], connect: "dowel", dowel_shape: "square", placement: "random", space: 4, dowel_d: 2, n_points: 2, round: 3, thicken: 1 }); await heal();
+    // this position leaves none (the preset); no gap: across one, the statue's thin parts float now that the remesh
+    // no longer fattens them; the steps change the hole's shape, which keeps every piece held
+    await params({ axis: "y", size: [0, 0, 260], center: [0, 1, 0], connect: "dowel", dowel_shape: "square", placement: "random", space: 0, dowel_d: 2, n_points: 2, round: 3, thicken: 1 }); await heal();
     await view(-55, 14, 1.05, 1.0); await project("stacked");      // assembled, never exploded: a clip must show the finished object
     await techClip("stacked", -55, 14, 1.0, [["round holes", () => set("dowel_shape", "round")], ["hexagon", () => set("dowel_shape", "hexagon")],
         ["cross", () => set("dowel_shape", "cross")], ["square", () => set("dowel_shape", "square")]]);
