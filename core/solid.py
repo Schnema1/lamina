@@ -64,7 +64,11 @@ def text_polygons(text, height, res=8) -> MultiPolygon:
     """Glyph outlines of `text` as polygons, the capitals `height` mm tall (rendered with Pillow, traced with
     scikit-image). Bold, so the strokes print: at 5 mm they are about 0.8 mm wide, two passes of a 0.4 mm nozzle."""
     from PIL import Image, ImageDraw, ImageFont
-    from skimage import measure
+    try:
+        from skimage import measure
+    except ImportError:          # left out on a Python it has no build for yet (pyproject, 027)
+        raise RuntimeError("engraved labels on prototypes need scikit-image, which has no build for this Python yet: "
+                           "run Lamina on Python 3.14 (uv tool install --python 3.14 lamina3d) or set labels to none") from None
     px = int(height * res * 1.4)                                         # the em is about 1.4 capitals
     for name in ("arialbd.ttf", "arial.ttf"):
         try:

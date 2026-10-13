@@ -4,7 +4,7 @@ version = "0.2.5"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 description = "Lamina: free Slicer for Fusion 360 alternative. Turns 3D models into flat cut parts (stacked, interlocked, radial, ribbed, folded panels) for laser, CNC, plasma and vinyl cutters"
-requires-python = ">=3.11,<3.15"   # the ceiling: a Python the compiled libraries (manifold3d …) have builds for; raise it when they ship 3.15 wheels (027)
+requires-python = ">=3.11"
 # PyPI search and libraries.io match on these; they name what people type, including the tools Lamina replaces.
 # No License :: classifier: the `license` expression above replaces it (PEP 639).
 keywords = ["laser cutting", "cnc", "plasma cutting", "slicer for fusion 360", "123d make", "papercraft", "pepakura",
@@ -23,17 +23,21 @@ classifiers = [
 ]
 dependencies = [
     "trimesh>=4.4",
-    "manifold3d",
+    # Three compiled libraries with no builds yet for CPython 3.15, which a fresh uv picks by default: left out there,
+    # so an install never tries to compile them (027). The code runs without manifold3d and fast-simplification (the
+    # browser build never has them) and says so where scikit-image is needed. Drop the markers when they ship 3.15
+    # wheels; the starters ask for 3.14 meanwhile.
+    "manifold3d; python_version < '3.15'",
     "shapely>=2.0",
     "numpy",
     "scipy",
-    "scikit-image",
+    "scikit-image; python_version < '3.15'",
     "rtree",
     "ezdxf",
     "pillow",
     "reportlab",
     "rectpack",
-    "fast-simplification",
+    "fast-simplification; python_version < '3.15'",
     "fastapi",
     "uvicorn",
     "python-multipart",
