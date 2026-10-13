@@ -31,13 +31,16 @@ there is a Discord.
   whole surface sitting a little outside where it was. The remesh now measures the real distance to the surface
   and puts it back exactly where it belongs: on a smooth blob the result is as smooth as the model itself, within a
   few hundredths of a millimetre, and the 3D preview stays smooth too. The values act exactly as well: thicken 1
-  grows the model by 1 mm, not by a whole cube, and the note that said "acted as" is gone. Rounding takes a few
-  seconds longer than before; detail finer than the grid (the note after slicing gives its size) is still lost, and
+  grows the model by 1 mm, not by a whole cube, and the note that said "acted as" is gone. The price is time: a
+  model with round set takes a few seconds longer to prepare than before (the examples, 3 to 6 s where it was
+  under 1), and several times that in the version that runs in the browser; the progress bar shows the step.
+  Detail finer than the grid (the note after slicing gives its size) is still lost, and
   a sharp edge or corner is softened by up to half a grid step. Parts that overlap in the file (a leg pushed into
   a body) are one solid, a closed inner surface is filled, and a shell that is open somewhere (the bunny example
   is one, with a 7 mm wall) stays a shell, as it is with every value at 0; the old grid thickened its wall shut.
-  The bunny and horse statue examples' settings were re-tuned for the exact remesh: the bunny is thickened 2 mm,
-  the statue stacks without a gap.
+  The bunny, head and horse statue examples' settings were re-tuned for the exact remesh: the bunny is thickened
+  2 mm, the head lets the grid pick its own size (it no longer needs a fine one to look smooth, and opens in a
+  third of the time), the statue stacks without a gap.
 - **The 3D view shades curved surfaces smoothly.** The translucent model used to be drawn with a flat shade on every
   triangle, so even a model that was never remeshed looked faceted; it is now shaded across the triangles, with
   edges sharper than 30° kept sharp.
