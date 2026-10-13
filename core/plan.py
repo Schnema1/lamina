@@ -362,13 +362,14 @@ def _match(c, g, tol, mirror, cl, gl):
     but another layer's outline marked on them are two parts."""
     if abs(c.area - g.area) > tol * c.area:
         return None
-    for kind, sx in (("same", 1), ("flipped", -1)) if mirror else (("same", 1),):
+    flip = lambda x: affinity.scale(x, -1, 1, origin=(0, 0))
+    tries = (("same", g, gl), ("flipped", flip(g), flip(gl))) if mirror else (("same", g, gl),)   # mirrored once, not per turn
+    for kind, m, ml in tries:
         for r in (0, 90, 180, 270):
-            h = affinity.rotate(affinity.scale(g, sx, 1, origin=(0, 0)), r, origin=(0, 0)); x0, y0, _, _ = h.bounds
+            h = affinity.rotate(m, r, origin=(0, 0)); x0, y0, _, _ = h.bounds
             if c.symmetric_difference(affinity.translate(h, -x0, -y0)).area > tol * c.area:
                 continue
-            hl = affinity.translate(affinity.rotate(affinity.scale(gl, sx, 1, origin=(0, 0)), r, origin=(0, 0)), -x0, -y0)
-            if _coincide(cl, hl):
+            if (cl.is_empty and ml.is_empty) or _coincide(cl, affinity.translate(affinity.rotate(ml, r, origin=(0, 0)), -x0, -y0)):
                 return kind
     return None
 
