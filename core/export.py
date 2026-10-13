@@ -363,6 +363,7 @@ def key_text(plan):
            "", "How the labels read"]
     out += ["  " + s.strip() for s in (plan.get("legend") or "").split(" · ") if s.strip()]
     out += ["  A part too big for the sheet is cut into pieces and the piece number comes last: Z-3-2 is the second piece of Z-3.",
+            "  Each label is engraved on its own part." if p.get("label_inside") else
             "  Each label is engraved beside its own part on the sheet, with a line pointing at it."]
     if codes:
         out += ["  Puzzle mode: what is engraved is the code in the first column below — it says nothing about where the part goes.",
