@@ -29,8 +29,8 @@ def handle(method: str, path: str, query: str, form) -> tuple[int, dict, bytes]:
             out = A.slice_model(client=f["client"], mode=f["mode"], params=f.get("params", "{}"), example=f.get("example", ""),
                                 job=f.get("job", ""), memo=f.get("memo", "{}"), model=upload)
         elif path.startswith("jobs/"):                       # what StaticFiles serves on the server
-            p = (A.JOBS / path[5:]).resolve()
-            if not (p.is_relative_to(A.JOBS.resolve()) and p.is_file()):
+            p = A.inside(A.JOBS, path[5:], status=404)
+            if not p.is_file():
                 raise HTTPException(404)
             return 200, {"content-type": mimetypes.guess_type(p.name)[0] or "application/octet-stream"}, p.read_bytes()
         elif path.startswith("api/job/"):
