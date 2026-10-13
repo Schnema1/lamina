@@ -135,6 +135,39 @@ def test_a_lone_part_file_puts_the_label_under_the_next_layer_like_the_sheet(tmp
     assert ring.covers(Point(float(label.get("x")), float(label.get("y"))))                  # in its file: the same spot
 
 
+def test_a_sliver_shed_from_the_layer_above_is_not_in_the_guide(tmp_path):
+    """A speck beside the block, thinner than min_feature and shorter than min_part: shed from the layer's cut, so
+    the layer below gets the block's ring as its guide and nothing for the speck."""
+    import numpy as np
+    import shapely
+    from shapely.geometry import LineString, Polygon
+    step = trimesh.creation.extrude_polygon(Polygon([(-50, -10), (50, -10), (50, 10), (-10, 10), (-10, 30), (-50, 30)]), 40)
+    speck = trimesh.creation.extrude_polygon(Polygon([(20, 10), (21.5, 10), (21.5, 30), (20, 30)]), 8)
+    step.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+    speck.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+    trimesh.util.concatenate([step, speck]).export(tmp_path / "step.stl")
+    plan = build(tmp_path / "step.stl", "stacked", {"distribution": "count", "count": 4, "autofix": "off", "connect": "none",
+                                                   "next_outline": True, "min_feature": 2, "min_part": 10})
+    by = {sl["label"]: sl for sl in plan["slices"]}
+    assert len(by["Z-3"]["pieces"]) == 1                                   # the speck is not a part of Z-3
+    rings = shapely.polygonize([LineString(pts) for pc in by["Z-2"]["pieces"] for _, pts in pc["lines"]])
+    assert len(rings.geoms) == 1 and 1300 < rings.area < 1900, rings.area   # and not engraved on Z-2 either
+
+
+def test_a_lone_part_file_carries_its_seam_numbers(tmp_path):
+    """Folded panels with `edge_labels`: the one-file-per-part export engraves each panel's seam numbers, as many as
+    the sheet shows for it, and a strip's number keeps it a file of its own (test_cutlist checks the identity)."""
+    plan = build(EXAMPLES / "cube.stl", "folded", {"facet": 0, "joint": "laced", "autofix": "off"})
+    pieces = {pc["label"]: pc for sl in plan["slices"] for pc in sl["pieces"]}
+    assert any(pc["marks"] for pc in pieces.values())
+    font = plan["params"]["font"]
+    for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True):
+        lab = f.name.split(" ")[1]
+        if lab in pieces:
+            small = etree.parse(str(f)).xpath(f'//svg:g[@id="LABEL"]/svg:text[@font-size="{font * 0.6}"]', namespaces=SVG_NS)
+            assert len(small) == len(pieces[lab]["marks"]) == len(pieces[lab]["kerfed_marks"]), lab
+
+
 def test_a_plain_per_piece_export_engraves_no_label(tmp_path):
     plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off"})
     files = export(plan, tmp_path, fmts=("svg",), labels=False, per_piece=True)

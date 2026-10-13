@@ -11,7 +11,8 @@ class Interlocked(Mode):
     name = "interlocked"
     title = "Interlocked Slices"
     description = "Two perpendicular families of slotted slices that lock together egg-crate style."
-    legend = ("X-2 = the 2nd slice of the X family, Y-4 = the 4th of the Y family, each counted from the low end · "
+    legend = ("X-2 = the 2nd slice of the X family, Y-4 = the 4th of the Y family, each counted from the low end (a slice "
+              "auto-fix added is numbered after the family's own) · "
               "the two families cross at right angles and half-lap into each other: X slots drop in from one side, Y from the other")
     params = [
         Param("up", "choice", "z", "Assembly axis: 1st family is inserted from +up, 2nd family from −up", choices=["x", "y", "z"]),
@@ -33,18 +34,24 @@ class Interlocked(Mode):
     def build(self, ctx):
         p = ctx.p
         up, a1, a2, e1, e2, eu = self.axes(ctx)
-        L1, L2 = ctx.ext[a1], ctx.ext[a2]
+        # how far the model reaches along each family's normal, and where its middle is: the grid turned by
+        # rotate_grid reaches past the box's extents (a cube is 1.41 times as long across its diagonal), and slices
+        # spread over the box's length left its corners with none
+        along = [(ctx.mesh.vertices - ctx.mid) @ e for e in (e1, e2)]
+        L1, L2 = (float(np.ptp(v)) for v in along); c1, c2 = (float(v.min() + v.max()) / 2 for v in along)
         if p["distribution"] == "distance":
             n1, n2 = max(1, int(L1 // p["spacing"])), max(1, int(L2 // p["spacing"]))
         else:
             n1, n2 = p["nx"], p["ny"]
         name1, name2 = "xyz"[a1].upper(), "xyz"[a2].upper()
         fams = []
-        for name, group, e, L, n, extra in ((name1, "X", e1, L1, n1, p["extra_x"]), (name2, "Y", e2, L2, n2, p["extra_y"])):
-            pos = sorted(list(ctx.positions(L, [p["thickness"]] * n)) + [float(x) for x in extra])
-            labs = [f"{name}-{j + 1}" for j in range(len(pos))]
-            fams.append(ctx.keep([Slice(lab, group, ctx.frame(lab, ctx.mid + e * s, e, up_hint=eu), ctx.thickness_of(lab))
-                                  for lab, s in zip(labs, pos)]))
+        for name, group, e, L, c, n, extra in ((name1, "X", e1, L1, c1, n1, p["extra_x"]), (name2, "Y", e2, L2, c2, n2, p["extra_y"])):
+            # auto-fix's extra slices are numbered after the family's own, so a slice keeps its label — and the edits
+            # keyed by it: offset, tilt, skip, thick … — when one is added before it; built in position order all the same
+            named = [(s, f"{name}-{j + 1}") for j, s in enumerate(ctx.positions(L, [p["thickness"]] * n))]
+            named += [(float(s), f"{name}-{n + j + 1}") for j, s in enumerate(sorted(float(x) for x in extra))]
+            fams.append(ctx.keep([Slice(lab, group, ctx.frame(lab, ctx.mid + e * (c + s), e, up_hint=eu), ctx.thickness_of(lab))
+                                  for s, lab in sorted(named)]))
         interlock(fams[0], fams[1], ctx, a_open=tuple(eu), b_open=tuple(-eu))
         ctx.cover_r = max(L1 / max(1, n1), L2 / max(1, n2)) / 2 + p["thickness"]
         return fams[0] + fams[1]

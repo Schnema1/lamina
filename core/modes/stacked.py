@@ -113,7 +113,10 @@ class Stacked(Mode):
             # the material: slots and dowel holes leave nothing to engrave. Widened by a hair, mitred: an edge the two
             # layers share lands a rounding error outside the exact outline and the ring would lose that side
             clip = a.profile.buffer(1e-6, join_style=2)
-            for poly in as_multi(b.raw).geoms:
+            # the layer above as it will be cut, its holes and slots filled back in: a sliver shed from it (a shaving
+            # thinner than min_feature) is not engraved as its edge, and a dowel hole is not engraved as a ring
+            above = unary_union([b.profile, *b.cuts]).intersection(b.raw) if b.cuts else b.profile
+            for poly in as_multi(above).geoms:
                 placed = shapely.affinity.affine_transform(poly, tf)
                 # The guide sits on the next layer's true edge; a negative `next_outline_offset` pulls it in, so the
                 # layer above still covers the line when the glue-up is a hair off. Mitred, not rounded, so a square

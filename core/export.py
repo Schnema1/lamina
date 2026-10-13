@@ -113,7 +113,8 @@ def identical_groups(plan):
 
 
 def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
-    """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, and its label.
+    """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, its seam
+    numbers and its label.
     With `inside`, the label is engraved on the part itself — where the sheet puts it: under the next layer's guide
     when the part carries one, else at its widest spot — and the drawing is grown so a label too big for a small part
     still comes out whole for the maker to trim."""
@@ -122,7 +123,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
     x0, y0 = min(xs) - pad, min(ys) - pad
     it.rings = [(l, [(x - x0, y - y0) for x, y in r]) for l, r in it.rings]
     it.scores = [(s, [(x - x0, y - y0) for x, y in pts]) for s, pts in pc.get("kerfed_lines") or []]   # in the part's own frame, like `kerfed`
-    it.marks = []
+    it.marks = [(x - x0, y - y0, t) for x, y, t in pc.get("kerfed_marks") or []]
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
     it.leader = None
     if not inside:
@@ -137,6 +138,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
     if dx or dy:
         it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
         it.scores = [(s, [(qx - dx, qy - dy) for qx, qy in pts]) for s, pts in it.scores]
+        it.marks = [(mx - dx, my - dy, t) for mx, my, t in it.marks]
         x -= dx; y -= dy; w -= dx; h -= dy
     it.label_pos = (x, y, rot)
     return it, max(w, x + bw / 2 + 1), max(h, y + bh / 2 + 1)       # grow the sheet of paper so nothing is clipped

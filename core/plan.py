@@ -7,7 +7,7 @@ import argparse, json, math, os, pathlib, shutil, threading, time
 import numpy as np
 import trimesh
 from shapely import affinity
-from shapely.geometry import MultiPolygon, MultiLineString
+from shapely.geometry import MultiPolygon, MultiLineString, MultiPoint
 from shapely.ops import unary_union
 from .modes import load_all, Ctx
 from .geometry import section_polygons, as_multi, poly_coords, line_coords
@@ -355,52 +355,65 @@ def square_up(mesh, rot):
     return [round(float(np.degrees(a)), 1) + 0.0 for a in trimesh.transformations.euler_from_matrix(R4, "sxyz")], off
 
 
-def _match(c, g, tol, mirror, cl, gl):
+MATCH_AREA = 2.0     # mm²: the most two outlines may differ by and still be one part, however big they are. Relative
+                     # alone, 0.1 % of a 200 cm² layer let a 6 mm dowel hole a millimetre off (12 mm²) pass as the same
+                     # part, and the second copy was cut with its holes in the wrong place
+
+
+def _moved(e, rot, x0, y0):
+    """An engraving (lines, mark points, mark texts) turned `rot` about the origin and moved by (-x0, -y0), as its outline was."""
+    mv = lambda g: affinity.translate(affinity.rotate(g, rot, origin=(0, 0)), -x0, -y0)
+    return mv(e[0]), mv(e[1]), e[2]
+
+
+def _match(c, g, tol, mirror, ce, ge):
     """How outline `g` fits outline `c` (both at the origin, long side along x): "same" under some quarter turn,
-    "flipped" when it only fits as its mirror image, None when it does not fit at all. The guide lines engraved on
-    them (`cl`, `gl`, in the same frames) have to coincide under that same move: two slices with the same outline
-    but another layer's outline marked on them are two parts."""
-    if abs(c.area - g.area) > tol * c.area:
+    "flipped" when it only fits as its mirror image, None when it does not fit at all. What is engraved on them (`ce`,
+    `ge`: guide lines, marks with their texts, in the same frames) has to coincide under that same move: two slices
+    with the same outline but another layer's outline, or another seam number, marked on them are two parts."""
+    lim = min(tol * c.area, MATCH_AREA)
+    if abs(c.area - g.area) > lim:
         return None
     flip = lambda x: affinity.scale(x, -1, 1, origin=(0, 0))
-    tries = (("same", g, gl), ("flipped", flip(g), flip(gl))) if mirror else (("same", g, gl),)   # mirrored once, not per turn
-    for kind, m, ml in tries:
+    tries = (("same", g, ge), ("flipped", flip(g), (flip(ge[0]), flip(ge[1]), ge[2]))) if mirror else (("same", g, ge),)   # mirrored once, not per turn
+    for kind, m, me in tries:
         for r in (0, 90, 180, 270):
             h = affinity.rotate(m, r, origin=(0, 0)); x0, y0, _, _ = h.bounds
-            if c.symmetric_difference(affinity.translate(h, -x0, -y0)).area > tol * c.area:
-                continue
-            if (cl.is_empty and ml.is_empty) or _coincide(cl, affinity.translate(affinity.rotate(ml, r, origin=(0, 0)), -x0, -y0)):
+            if c.symmetric_difference(affinity.translate(h, -x0, -y0)).area <= lim and _coincide(ce, _moved(me, r, x0, y0)):
                 return kind
     return None
 
 
 def _coincide(a, b, w=0.05):
-    """Line sets `a` and `b` are the same lines: each within `w` mm of the other, well under a kerf and over any drift."""
-    if a.is_empty or b.is_empty:
-        return a.is_empty and b.is_empty
-    return a.buffer(w).covers(b) and b.buffer(w).covers(a)
+    """Engravings `a` and `b` are the same: each line set within `w` mm of the other (well under a kerf and over any
+    drift), and every mark's text at the other's spot, within half a millimetre."""
+    (la, pa, ta), (lb, pb, tb) = a, b
+    if la.is_empty != lb.is_empty or not (la.is_empty or la.buffer(w).covers(lb) and lb.buffer(w).covers(la)):
+        return False
+    return len(ta) == len(tb) and all(any(t == u and p.distance(q) < 0.5 for q, u in zip(pb.geoms, tb)) for p, t in zip(pa.geoms, ta))
 
 
 def mark_identical(pieces, mirror=False, tol=1e-3):
     """Pieces with the same cut outline — kerf applied, any quarter turn, and with `mirror` also turned over — are one
     part in several copies: the first of each set keeps the others' labels in `same`, the ones that have to be turned
-    over in `flipped`, so they are cut once with a quantity and listed once. A guide line engraved on a piece (stacked,
-    `next_outline`) is part of what the piece is and has to match too; fold lines keep every folded panel a part of its own."""
-    groups = []                                     # [(first piece, its outline at the origin, its guide lines there)]
+    over in `flipped`, so they are cut once with a quantity and listed once. What is engraved on a piece — a guide line
+    (stacked, `next_outline`), a seam number — is part of what the piece is and has to match too; fold lines keep every
+    folded panel a part of its own."""
+    groups = []                                     # [(first piece, its outline at the origin, what is engraved on it there)]
     for pc in pieces:
         if any(s != "guide" for s, _ in pc.lines):  # score lines (folded panels): each fold pattern is its own part
             continue
         a = _min_rect_angle(pc.kerfed)
         g = affinity.rotate(pc.kerfed, a, origin=(0, 0)); x0, y0, _, _ = g.bounds; g = affinity.translate(g, -x0, -y0)
-        gl = affinity.translate(affinity.rotate(MultiLineString([ln for _, ln in pc.lines]), a, origin=(0, 0)), -x0, -y0)
-        for first, c, cl in groups:
+        ge = _moved((MultiLineString([ln for _, ln in pc.lines]), MultiPoint([(x, y) for x, y, _ in pc.marks]), [t for *_, t in pc.marks]), a, x0, y0)
+        for first, c, ce in groups:
             # same outline but cut from other stock is not the same part: it belongs on the other thickness's sheet
-            kind = _match(c, g, tol, mirror, cl, gl) if first.parent.thickness == pc.parent.thickness else None
+            kind = _match(c, g, tol, mirror, ce, ge) if first.parent.thickness == pc.parent.thickness else None
             if kind:
                 (first.same if kind == "same" else first.flipped).append(pc.label)
                 break
         else:
-            groups.append((pc, g, gl))
+            groups.append((pc, g, ge))
 
 
 def shed_slivers(raw, prof, cuts, mf, mp):
@@ -590,6 +603,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
                         "lines": [[s, line_coords(l)[0]] for s, l in pc.placed_lines],   # fold and guide lines on the sheet
                         "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
                         "marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.placed_marks],
+                        "kerfed_marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.marks],
                         "label_pos": pc.label_pos, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
                         "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight
                         } for pc in sl.pieces],

@@ -3,6 +3,7 @@ bar; a split never leaves a partial puzzle tab."""
 import pathlib
 import types
 
+import numpy as np
 from shapely.geometry import Point, box
 from shapely.ops import unary_union
 
@@ -13,6 +14,26 @@ from core.split import split_slice
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
+
+
+def test_the_same_outline_is_not_the_same_part_with_its_holes_or_its_marks_elsewhere():
+    """`mark_identical`: two 200 × 100 mm slabs with a 6 mm hole a millimetre apart are two parts, whatever the slab's
+    area makes of a millimetre (12 mm² of a 200 cm² slab is 0.06 %, under the old relative tolerance); so are two
+    strips alike in outline with another seam number engraved, or the same number elsewhere on the strip."""
+    from shapely.geometry import MultiPolygon
+    from core.model import Piece, Slice
+    from core.plan import mark_identical
+    slab = lambda hx: MultiPolygon([box(0, 0, 200, 100).difference(Point(hx, 50).buffer(3))])
+    parent = Slice("Z-1", "S", np.eye(4), 3.0)
+    piece = lambda lab, g, marks=(): Piece(lab, g, parent, [], list(marks), kerfed=g)
+    same = [piece("Z-1", slab(40)), piece("Z-2", slab(40))]; mark_identical(same)
+    assert same[0].same == ["Z-2"]
+    shifted = [piece("Z-1", slab(40)), piece("Z-2", slab(41))]; mark_identical(shifted)
+    assert shifted[0].same == [] and shifted[1].same == []
+    strip = MultiPolygon([box(0, 0, 60, 8)])
+    marked = [piece("S-1", strip, [(30, 4, "3")]), piece("S-2", strip, [(30, 4, "4")]), piece("S-3", strip, [(10, 4, "3")]), piece("S-4", strip, [(30.2, 4.1, "3")])]
+    mark_identical(marked)
+    assert marked[0].same == ["S-4"] and marked[1].same == [] and marked[2].same == []
 
 
 def test_per_piece_export_merges_identical_pieces_with_a_quantity(tmp_path):
