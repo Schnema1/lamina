@@ -23,9 +23,10 @@ classifiers = [
 ]
 dependencies = [
     "trimesh>=4.4",
-    # Two compiled libraries with no builds yet for CPython 3.15, which a fresh uv picks by default: left out there, so
-    # an install never tries to compile them (027). The code runs without manifold3d (the browser build never has it)
-    # and says so where scikit-image is needed. Drop the markers when both ship 3.15 wheels; the starters ask for 3.14.
+    # Three compiled libraries with no builds yet for CPython 3.15, which a fresh uv picks by default: left out there,
+    # so an install never tries to compile them (027). The code runs without manifold3d and fast-simplification (the
+    # browser build never has them) and says so where scikit-image is needed. Drop the markers when they ship 3.15
+    # wheels; the starters ask for 3.14 meanwhile.
     "manifold3d; python_version < '3.15'",
     "shapely>=2.0",
     "numpy",
@@ -36,7 +37,7 @@ dependencies = [
     "pillow",
     "reportlab",
     "rectpack",
-    "fast-simplification",
+    "fast-simplification; python_version < '3.15'",
     "fastapi",
     "uvicorn",
     "python-multipart",
