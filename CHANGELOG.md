@@ -25,6 +25,21 @@ panel's fold lines, and there is a Discord.
 
 ### Changed
 
+- **Round, thicken, hollow and shrinkwrap keep a curved model smooth.** Any of them used to send the model through a
+  grid of cubes, and a smooth curve came back faceted and bumpy, both in the 3D view and on the cut parts, with the
+  whole surface sitting a little outside where it was. The remesh now measures the real distance to the surface
+  and puts it back exactly where it belongs: on a smooth blob the result is as smooth as the model itself, within a
+  few hundredths of a millimetre, and the 3D preview stays smooth too. The values act exactly as well: thicken 1
+  grows the model by 1 mm, not by a whole cube, and the note that said "acted as" is gone. Rounding takes a few
+  seconds longer than before; detail finer than the grid (the note after slicing gives its size) is still lost, and
+  a sharp edge or corner is softened by up to half a grid step. Parts that overlap in the file (a leg pushed into
+  a body) are one solid, a closed inner surface is filled, and a shell that is open somewhere (the bunny example
+  is one, with a 7 mm wall) stays a shell, as it is with every value at 0; the old grid thickened its wall shut.
+  The bunny and horse statue examples' settings were re-tuned for the exact remesh: the bunny is thickened 2 mm,
+  the statue stacks without a gap.
+- **The 3D view shades curved surfaces smoothly.** The translucent model used to be drawn with a flat shade on every
+  triangle, so even a model that was never remeshed looked faceted; it is now shaded across the triangles, with
+  edges sharper than 30° kept sharp.
 - **The steps slider is easier to use.** The slider that plays the build order over the 3D view is almost three times
   as wide, so a drag lands on one layer at a time, and a counter beside it reads the step you are on, live as you
   drag and while the assembly video records. Thanks to @Schnema1.

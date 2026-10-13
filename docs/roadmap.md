@@ -22,7 +22,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 | Tool Diameter → Dog Bone | ✅ | `tool_d`, `relief` = square / dogbone / tbone_h / tbone_v; applies to interlocked, curve and radial core slots |
 | Object Size: Original Size button | ✅ | Model tab → original size |
 | Object Size: uniform / per-axis | ✅ | `scale`, `size=[x,y,z]` (one value = uniform fit) |
-| Modify Form: Hollow / Thicken / Shrinkwrap | ✅ | one voxel pass: `shrinkwrap` (pitch), `hollow` (wall), `thicken` (dilate); plus `round` (opening + closing) and `smooth` (Taubin). The grid follows the feature you ask for rather than the size of the model, and the steps a grid always leaves are smoothed off, so a smooth model comes back smooth (measured: `round 2` on the egg went from 13 % of edges over 45° to 0 %) |
+| Modify Form: Hollow / Thicken / Shrinkwrap | ✅ | one pass on a signed distance field: `shrinkwrap` (grid pitch), `hollow` (wall), `thicken` (grow), `round` (opening + closing), all exact in mm; plus `smooth` (Taubin). Marching cubes on the field puts the surface where it really is, so a smooth model comes back smooth (measured on the blob: the angle between neighbouring faces at the 95th percentile is 4° against the model's 6°, the surface within 0.03 mm of the original; the binary voxel grid before gave 21° and 1.6 mm) |
 | Kerf compensation (extra) | ✅ | `kerf` |
 
 ## §3 Construction techniques
