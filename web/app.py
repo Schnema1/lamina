@@ -40,18 +40,28 @@ CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{16,64}")  # long enough that nobody guess
 JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # no dots: these two build every path under jobs/
 
 
+def inside(base: pathlib.Path, *parts: str, status: int = 400) -> pathlib.Path:
+    """A path under `base` built from request values. The ids are matched against CLIENT_ID / JOB_ID first, which admit
+    neither a separator nor a dot; this then normalises the joined path and checks it still starts with the base — the
+    one shape of check a code scanner recognises, so every path under jobs/ is seen to be safe, not only known to be."""
+    p = os.path.normpath(os.path.join(base, *parts))
+    if not p.startswith(os.path.normpath(base) + os.sep):
+        raise HTTPException(status, "bad path")
+    return pathlib.Path(p)
+
+
 def client_dir(client: str) -> pathlib.Path:
     """The client's own directory. Its id is the only way in — nothing under jobs/ can be listed — so one person's
     models, cut files and session stay out of reach of everyone else on the server."""
     if not CLIENT_ID.fullmatch(client):
         raise HTTPException(400, "bad client id")
-    return JOBS / client
+    return inside(JOBS, client)
 
 
 def job_dir(client: str, job: str) -> pathlib.Path:
     if not JOB_ID.fullmatch(job):
         raise HTTPException(400, "bad job id")
-    return client_dir(client) / job
+    return inside(client_dir(client), job)
 
 
 TTL = float(os.environ.get("LAMINA_TTL_HOURS", 24)) * 3600  # 0 = never: only "clear my data" deletes
@@ -199,7 +209,7 @@ def slice_model(client: str = Form(...), mode: str = Form(...), params: str = Fo
     elif example:
         job = "ex_" + example
         jd = job_dir(client, job)  # validates the name before it reaches the filesystem
-        mpath = EXAMPLES / f"{example}.stl"
+        mpath = inside(EXAMPLES, f"{example}.stl")
         if not mpath.exists():
             raise HTTPException(400, "unknown example")
         jd.mkdir(exist_ok=True)
