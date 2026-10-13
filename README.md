@@ -8,6 +8,7 @@
 [![image](https://img.shields.io/badge/ghcr.io-lamina%3Alatest-4f8cff?logo=docker&logoColor=white)](https://github.com/marcelfarres/lamina/pkgs/container/lamina)
 [![licence](https://img.shields.io/badge/licence-AGPL--3.0-5fcf80)](LICENSE)
 [![ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/marcelfarres)
+[![discord](https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white)](https://discord.gg/N66bCQxmt3)
 
 **Turn a 3D model into flat parts you can cut, and check that they go back together.**
 
@@ -64,7 +65,7 @@ I hope it is useful to you too. If you make something with it, share it — **sh
 tab or the landing page sends a photo by email (or the
 [gallery issue form](https://github.com/marcelfarres/lamina/issues/new?template=made.yml)), and with your OK it
 goes in the [gallery](https://marcelfarres.github.io/lamina/#made), credited as you like. Or post it on Instagram
-or X with **#lamina3d**.
+or X with **#lamina3dapp**, or in **#show-what-you-made** on the [Lamina Discord](https://discord.gg/N66bCQxmt3).
 
 **About how it was made.** A large part of this code was written with AI assistance, directed and reviewed by
 me. I am conscious of what that costs, in energy and in its wider effects on people and nature, and I try to use
@@ -96,6 +97,10 @@ sheet before you commit expensive material.
   hand. It asks for the model and the settings that reproduce the problem; the quickest way to give both is
   **save project** in the UI, which writes one file with the model embedded and every parameter in it — the same
   file the button attaches.
+
+**A question, an idea, or stuck on a build?** Ask on the [Lamina Discord](https://discord.gg/N66bCQxmt3), where
+other people cutting with it can answer too. A bug is still best sent one of the two ways above: the model and
+settings that come with it are what let it be fixed.
 
 **A machine or material that cuts well for you?** Each has a **share** button beside it on the Sheet & fit tab
 that sends that one thing the same two ways (email, or the
