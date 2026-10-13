@@ -360,6 +360,8 @@ def job_proto(client: str, job: str, scale: float = 1.0, size: float = 0.0, labe
             z.writestr(*project_file(client, jd, plan))
             for f in files:
                 z.write(f, f.name)
+    except RuntimeError as e:          # what the set cannot do on this computer, said in its own words (027: no scikit-image on 3.15)
+        raise HTTPException(400, str(e)) from None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{design_name(plan)}_{plan["mode"]}_proto_x{scale:.3g}.zip"'})

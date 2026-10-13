@@ -32,6 +32,7 @@ dependencies = [
     "numpy",
     "scipy",
     "scikit-image; python_version < '3.15'",
+    "networkx",                 # trimesh's closed-path and graph work; used to come in under scikit-image only
     "rtree",
     "ezdxf",
     "pillow",
