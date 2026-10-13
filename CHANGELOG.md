@@ -4,6 +4,11 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ## 0.2.5
 
+The first version with changes from outside Lamina: @Schnema1 sent three. A stacked slice can carry the outline of
+the layer above as an engraved line to glue by, labels can go on the parts themselves where the next layer hides
+them, and the steps slider is wide enough to land on one layer at a time. The one-file-per-part export now keeps a
+panel's fold lines, and there is a Discord.
+
 ### Added
 
 - **Stacked: the next layer's outline, engraved on the slice below.** A new option for stacked models engraves on
