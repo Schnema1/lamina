@@ -6,8 +6,9 @@ What changed in each release. The GitHub release for a version is this section, 
 
 The first version with changes from outside Lamina: @Schnema1 sent three. A stacked slice can carry the outline of
 the layer above as an engraved line to glue by, labels can go on the parts themselves where the next layer hides
-them, and the steps slider is wide enough to land on one layer at a time. The one-file-per-part export now keeps a
-panel's fold lines, and there is a Discord.
+them, and the steps slider is wide enough to land on one layer at a time. Round, thicken, hollow and shrinkwrap
+keep a curved model smooth instead of faceting it. The one-file-per-part export now keeps a panel's fold lines, and
+there is a Discord.
 
 ### Added
 
