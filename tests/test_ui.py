@@ -1139,11 +1139,12 @@ def test_the_notes_keep_their_lists_from_a_windows_checkout(page, server):
         page.goto(server + "/"); settle(page); page.wait_for_timeout(600)
         assert page.locator("#newsdlg[open]").count(), "the newest version did not announce itself"
         items = page.eval_on_selector_all("#news_body li", "els => els.map(e => e.textContent)")
-        assert len(items) == bullets > 3, items
+        assert len(items) == bullets > 1, items                           # two are enough to run into each other
         assert not any(" - **" in t or "\n" in t for t in items)          # no bullet run into another
-        page.click("#news_go")
     finally:
         page.unroute("**/changelog.md")
+        if page.locator("#newsdlg[open]").count():
+            page.click("#news_go")                       # left open, it takes every later test's clicks
 
 
 def test_the_wheel_zooms_back_out(page, server):
