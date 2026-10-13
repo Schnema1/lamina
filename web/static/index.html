@@ -515,7 +515,7 @@ function setMode(name,keep=true){
 function showTab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));$$('section[data-tab]').forEach(s=>s.classList.toggle('on',s.dataset.tab===t));
   rings.visible=t==='model';dirty=true}   // the turn rings only clutter the view outside the Model tab
 function status(s,kind){$('#status').textContent=s;$('#dot').className=kind||''}
-function schedule(){clearTimeout(timer);timer=setTimeout(slice,350)}
+function schedule(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;slice()},350)}
 
 // ---------------------------------------------------------------- undo / redo
 // The design is `state` + the technique + the units, so history is a stack of snapshots of exactly that, one taken per
@@ -1449,7 +1449,7 @@ async function init(){
     if(pr.params.material)$('#material').onchange({target:{value:pr.params.material}});
     const m=state.material||'cardboard', next=pr.params.machine||(machineOf(was)?.cuts.includes(kind(m))?was:matOf(m).machine);
     if(next===was)Object.assign(state,fit); else applyMachine(next);
-    clearTimeout(timer);renderFields()};
+    clearTimeout(timer);timer=null;renderFields()};
   // the file box lets go of the upload too: left holding it, choosing that same file again fires no change and loads nothing
   $('#example').onchange=()=>{pendingFile=null;$('#file').value='';newModel();applyPreset();countUse('model','example');fresh='loaded example '+$('#example').value;slice()};
   // A big mesh in the browser build is slow but not refused — the ceiling is this tab's memory, and it is the
@@ -1536,6 +1536,7 @@ window.laminaFeedback?.({bug:async withModel=>{
 
 // test and capture hook (tests/test_ui.py, scripts/media/capture.mjs)
 window.__t={target:()=>controls.target,parts:()=>parts.children,guides:()=>guides.children,gizmo:()=>gizmo.children,axes:()=>[...axes.children,...rings.children],camera,canvas:()=>renderer.domElement,state:()=>state,plan:()=>plan,job:()=>job,
+  idle:()=>!timer&&!busy,   // no change waiting out its debounce, no slice running: what a test or a capture waits for
   ghost:()=>ghost.children,ghostUrl:()=>ghostUrl,pivot:()=>pivot3&&rnd(pivot3),
   screen:p=>{const q=new THREE.Vector3(p[0],p[1],p[2]).project(camera),r=renderer.domElement.getBoundingClientRect();
     return [r.left+(q.x+1)/2*r.width,r.top+(1-q.y)/2*r.height]},   // world point → the pixel to click, for drag tests
