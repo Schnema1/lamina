@@ -133,9 +133,13 @@ starters are the same convenience without it.
 this:
 
 ```bash
-uv tool install lamina3d     # "lamina3d[cad]" adds STEP / BREP import
-lamina3d                     # opens http://localhost:8000 (--port to change it)
+uv tool install --python 3.14 lamina3d     # "lamina3d[cad]" adds STEP / BREP import
+lamina3d                                   # opens http://localhost:8000 (--port to change it)
 ```
+
+`--python 3.14` names the Python Lamina is tested on; left out, uv takes the newest one it knows, and two of
+Lamina's libraries have no builds for Python 3.15 yet (an install there leaves them out, and engraved labels on
+prototypes need one of them).
 
 If the shell says `lamina3d` is not found, uv's tool folder is not on your PATH yet: run `uv tool update-shell` and
 open a new terminal, or start it with `uv tool run lamina3d`.
@@ -164,7 +168,7 @@ and made to slice before it is published:
 
 | how you run it | how it updates |
 |---|---|
-| the double-click starter | by itself: every start runs `uv tool install --upgrade lamina3d`; offline it starts the version you have |
+| the double-click starter | by itself: every start runs `uv tool install --upgrade --python 3.14 lamina3d`; offline it starts the version you have |
 | `uv tool install` | `uv tool upgrade lamina3d` |
 | Docker | `docker pull ghcr.io/marcelfarres/lamina:latest`, then start it again (`docker compose pull && docker compose up -d`) |
 | a clone | `git pull && uv sync` |

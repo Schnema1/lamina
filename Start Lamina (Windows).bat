@@ -29,7 +29,7 @@ if errorlevel 1 (
 
 echo Getting Lamina ready — the first time downloads Python and the libraries, so give it a few minutes.
 echo After that it only downloads something when a new version of Lamina is out.
-uv tool install --upgrade lamina3d
+uv tool install --upgrade --python 3.14 lamina3d
 if errorlevel 1 echo Could not check for a new version — starting the one already on this computer.
 
 echo.

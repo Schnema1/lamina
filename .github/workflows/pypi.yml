@@ -47,7 +47,7 @@ jobs:
       # the wheel as the starters run it, from an empty folder: page, examples and changelog have to be inside it
       - name: the installed package slices
         run: |
-          uv tool install dist/*.whl
+          uv tool install --python 3.14 dist/*.whl   # the Python the starters ask for (027): the runner's default is newer than the libraries
           mkdir run && cd run
           BROWSER=true uv tool run lamina3d --port 8000 &
           trap "kill $!" EXIT   # left running, it holds uv's cache lock: setup-uv's cleanup then waits 5 min and fails the run
