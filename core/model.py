@@ -52,7 +52,20 @@ class Slice:
     pieces: list = field(default_factory=list)    # Piece objects when split
     warnings: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    fixes: list = field(default_factory=list)     # [{"error", "options": [{"title", "set"}]}] one-click fixes (checks.suggest_fixes)
     note: str = ""                      # extra text shown with the label (e.g. rib angle)
+    # what a technique keeps on its own slices while it builds them
+    pair: int = 0                       # stacked peg / spacer: the pair of layers it sits between (assembly order)
+    cutkeys: dict = field(default_factory=dict)   # stacked: (x, y, angle) → the cut there, so an aligned dowel is cut once
+    inner: MultiPolygon | None = None   # stacked: raw eroded by min_feature, where a cut keeps a full wall (cached)
+    dowel_room: list = field(default_factory=list)  # stacked: where a rod through this slice and a neighbour can go (checks)
+    radial: np.ndarray | None = None    # radial half-slice: the way it points out from the axis
+    lobe: int = 0                       # radial: which axis's lobe the part belongs to
+    pn: object = None                   # folded: the Panel this slice is cut from
+    additions: list = field(default_factory=list)   # folded: tabs added to the panel's outline
+    skipped: dict = field(default_factory=dict)     # folded: what → seams whose joint found no room
+    reduced: int = 0                    # folded: joints made smaller than asked
+    tab_facets: list = field(default_factory=list)  # folded: the tabs as the 3D view shows them, folded onto their panel
 
     @property
     def bbox(self):

@@ -8,7 +8,9 @@ from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
 from . import Mode, Param, register
 from ..model import Slice
-from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, rect_along, as_multi, as_lines, section_polygons, frame_xy, to_local
+from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
+
+_dist = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])   # noqa: E731
 
 CONNECT_HELP = ("dowel = round/square rods through holes (drawn in the 3D view), the default: glue alone leaves every layer free to "
                 "slide while it dries, and two dowels through a piece hold it where it belongs · tab = flat pieces cut from the sheet: "
@@ -75,7 +77,7 @@ class Stacked(Mode):
         # assembly order: a slice, then the connectors that sit on it, then the next slice …
         by_pair = {}
         for sl in extra:
-            by_pair.setdefault(getattr(sl, "pair", 0), []).append(sl)
+            by_pair.setdefault(sl.pair, []).append(sl)
         out = []
         for i, sl in enumerate(slices):
             out.append(sl); out += by_pair.get(i, [])
@@ -108,8 +110,6 @@ class Stacked(Mode):
         off = ctx.p["next_outline_offset"]
         slices = [s for s in slices if s.group == "S"]            # the layers, not the pegs or spacers between them
         for a, b in zip(slices, slices[1:]):
-            A = np.linalg.inv(a.M) @ b.M                      # b's local xy → a's local xy
-            tf = [A[0, 0], A[0, 1], A[1, 0], A[1, 1], A[0, 3], A[1, 3]]
             # the material: slots and dowel holes leave nothing to engrave. Widened by a hair, mitred: an edge the two
             # layers share lands a rounding error outside the exact outline and the ring would lose that side
             clip = a.profile.buffer(1e-6, join_style=2)
@@ -117,7 +117,7 @@ class Stacked(Mode):
             # thinner than min_feature) is not engraved as its edge, and a dowel hole is not engraved as a ring
             above = unary_union([b.profile, *b.cuts]).intersection(b.raw) if b.cuts else b.profile
             for poly in as_multi(above).geoms:
-                placed = shapely.affinity.affine_transform(poly, tf)
+                placed = into(a.M, b.M, poly)                 # b's local xy → a's local xy
                 # The guide sits on the next layer's true edge; a negative `next_outline_offset` pulls it in, so the
                 # layer above still covers the line when the glue-up is a hair off. Mitred, not rounded, so a square
                 # stays a square where the outline follows the part's corners.
@@ -150,9 +150,9 @@ class Stacked(Mode):
         x0, y0, x1, y1 = region.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2; w, h = x1 - x0, y1 - y0
 
         def ok(pts):
-            return (min((np.hypot(q[0] - r[0], q[1] - r[1]) for q in pts for r in pts if q is not r), default=apart) >= apart
+            return (min((_dist(q, r) for q in pts for r in pts if q is not r), default=apart) >= apart
                     and all(region.contains(Point(q)) for q in pts)
-                    and all(np.hypot(q[0] - r[0], q[1] - r[1]) > by for q in pts for r in clear))
+                    and all(_dist(q, r) > by for q in pts for r in clear))
 
         # as many as fit, down to two: three that do not fit a small layer used to fall straight to one point, which
         # the carried rods then crowded (the horse's legs came out worse held for asking more dowels)
@@ -182,21 +182,20 @@ class Stacked(Mode):
             return [(c.x, c.y)]
         edge = [region.exterior.interpolate(t, normalized=True) for t in np.arange(16) / 16]
         fits = [q for q in ((m.x + k * (e.x - m.x), m.y + k * (e.y - m.y)) for e in edge for k in (0.8, 0.5)) if ok([q])]
-        return [max(fits, key=lambda q: min((np.hypot(q[0] - r[0], q[1] - r[1]) for r in clear), default=0))] if fits else []
+        return [max(fits, key=lambda q: min((_dist(q, r) for r in clear), default=0))] if fits else []
 
     def common_points(self, ctx, margin):
         """The same points through the whole stack: n_points per island of the region common to every slice (cached)."""
-        if not hasattr(ctx, "_common_pts"):
+        if ctx.common_pts is None:
             inter = None
-            for sl in ctx._stack:
+            for sl in ctx.stack:
                 inter = sl.raw if inter is None else inter.intersection(sl.raw)
             inter = inter.buffer(-margin) if inter is not None else None
-            pts = []
+            ctx.common_pts = []
             if inter is not None and not inter.is_empty:
-                for isl in getattr(inter, "geoms", [inter]):
-                    pts += self.spread(isl, ctx.p["n_points"], apart=2.5 * ctx.p["dowel_d"])
-            ctx._common_pts = pts
-        return ctx._common_pts
+                for isl in shapely.get_parts(inter):
+                    ctx.common_pts += self.spread(isl, ctx.p["n_points"], apart=2.5 * ctx.p["dowel_d"])
+        return ctx.common_pts
 
     def points_for_pair(self, ctx, a, b, i, d, margin, taken):
         """Connection points (local xy of slice a) between consecutive slices a, b — per island of their overlap,
@@ -212,23 +211,27 @@ class Stacked(Mode):
         # An island is somewhere this connector really fits: the hole and the wall around it. Hollowing a model turns
         # every layer into a thin ring, and eroding that ring leaves a scatter of crumbs — each of which used to be
         # given points of its own, which is how a job asking for two pins per layer came back with fifteen.
-        islands = []
-        for g in getattr(raw, "geoms", [raw]):
-            isl = g.buffer(-margin)
-            islands += [h for h in getattr(isl, "geoms", [isl]) if not h.is_empty and h.area >= (d / 2) ** 2]
+        islands = [h for g in shapely.get_parts(raw) for h in shapely.get_parts(g.buffer(-margin)) if not h.is_empty and h.area >= (d / 2) ** 2]
         # where a rod through this pair can go, kept on both slices (b's own frame: a layer can be tilted) for the
         # spread check to offer a dowel that will really be cut — the piece alone offered ears spots nothing cut
-        T = np.linalg.inv(b.M) @ a.M
-        a.__dict__.setdefault("dowel_room", []).extend(islands)
-        b.__dict__.setdefault("dowel_room", []).extend(
-            shapely.affinity.affine_transform(h, [T[0, 0], T[0, 1], T[1, 0], T[1, 1], T[0, 3], T[1, 3]]) for h in islands)
+        a.dowel_room += islands
+        b.dowel_room += [into(b.M, a.M, h) for h in islands]
         if not islands:
             return []
-        out = []
-        want = max(1, p["n_points"])
         if p["placement"] == "aligned":
+            return self._aligned(ctx, a, islands, overlap, d, margin, clearance, taken)
+        if p["placement"] == "random":
+            return self._random(p, islands, i, clearance, taken)
+        return self._on_lines(p, a, b, overlap)
+
+    def _aligned(self, ctx, a, islands, overlap, d, margin, clearance, taken):
+        """The points the whole stack shares, and the ones typed in, where they fall on this pair's islands; an island
+        they miss, or hold badly, gets a spread of its own."""
+        p = ctx.p; out = []
+        want = max(1, p["n_points"])
+        if True:
             fixed = [q for q in list(p["dowels"]) + self.common_points(ctx, margin) if overlap.contains(Point(q))]
-            clear = lambda q, pts: all(np.hypot(q[0] - r[0], q[1] - r[1]) > clearance for r in pts)   # noqa: E731
+            clear = lambda q, pts: all(_dist(q, r) > clearance for r in pts)   # noqa: E731
             for isl in islands:
                 # held is the piece's hold, not the overlap's: an ear's overlap is a sliver of the ear, and two dowels
                 # holding the sliver dropped the third rod the ear itself needed (1.37 where the check promised 0.9)
@@ -253,7 +256,7 @@ class Stacked(Mode):
                 # up left the blob's foot lopsided, 2.2) — one that holds first, then the count, then the better hold:
                 # counting first chose three dowels bunched on a horse's leg over two that held it.
                 c = isl.centroid
-                for q in sorted(taken, key=lambda q: -np.hypot(q[0] - c.x, q[1] - c.y)):
+                for q in sorted(taken, key=lambda q: -_dist(q, (c.x, c.y))):
                     if held(mine):
                         break
                     if isl.contains(Point(q)) and clear(q, mine):
@@ -269,41 +272,49 @@ class Stacked(Mode):
                     own += [q for q in fresh if clear(q, own)]
                     mine = min((mine, topped, own), key=lambda pts: (lev(pts) > LEVERAGE_OK, -min(len(pts), need), lev(pts)))
                 out += mine
-        elif p["placement"] == "random":
-            rng = np.random.default_rng(1000 + i)
-            for isl in islands:
-                x0, y0, x1, y1 = isl.bounds
-                # 800 candidates at once: inside the island and clear of the holes already cut (one shapely call per
-                # island instead of one per candidate)
-                q = np.round(rng.uniform((x0, y0), (x1, y1), (800, 2)), 1)
-                q = q[shapely.contains_xy(isl, q[:, 0], q[:, 1])]
-                if len(q) and taken:
-                    q = q[(np.linalg.norm(q[:, None] - np.asarray(taken, float), axis=2) >= clearance).all(1)]
-                if not len(q):
-                    continue
-                # Then each point as far as it can get from the ones already chosen, starting from the candidate
-                # farthest from a random one. Taking the first candidates that merely kept clear of each other left
-                # both dowels of a pair at one end of the layer and the other end free to lift (reported; the
-                # farthest point of a layer sat 0.9 of its width from any dowel) — this keeps the randomness in
-                # where the spread starts, not in whether it covers the layer.
-                far, got = np.linalg.norm(q - q[0], axis=1), []
-                while len(got) < p["n_points"] and (not got or far.max() > clearance):
-                    k = int(far.argmax()); got.append((float(q[k, 0]), float(q[k, 1])))
-                    to_k = np.linalg.norm(q - q[k], axis=1)
-                    far = to_k if len(got) == 1 else np.minimum(far, to_k)     # the random seed is not a dowel
-                out += got
-        else:                                                # lines: where each 3D line crosses the mid-gap plane
-            zmid = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2])) / 2
-            for ln in p["lines"]:
-                P0, P1 = (to_local_z(a.M, q) for q in ln[:2])
-                if abs(P1[2] - P0[2]) < 1e-9:
-                    continue
-                u = (zmid - P0[2]) / (P1[2] - P0[2])
-                if 0 <= u <= 1:
-                    q = P0[:2] + (P1[:2] - P0[:2]) * u
-                    if overlap.contains(Point(q)):
-                        out.append((float(q[0]), float(q[1])))
         return out      # whether each one really fits, against the cuts already made, is connect's `fits`
+
+    @staticmethod
+    def _random(p, islands, i, clearance, taken):
+        """n_points per island, drawn at random (seeded by the pair, so the same job gives the same plan)."""
+        rng = np.random.default_rng(1000 + i); out = []
+        for isl in islands:
+            x0, y0, x1, y1 = isl.bounds
+            # 800 candidates at once: inside the island and clear of the holes already cut (one shapely call per
+            # island instead of one per candidate)
+            q = np.round(rng.uniform((x0, y0), (x1, y1), (800, 2)), 1)
+            q = q[shapely.contains_xy(isl, q[:, 0], q[:, 1])]
+            if len(q) and taken:
+                q = q[(np.linalg.norm(q[:, None] - np.asarray(taken, float), axis=2) >= clearance).all(1)]
+            if not len(q):
+                continue
+            # Then each point as far as it can get from the ones already chosen, starting from the candidate
+            # farthest from a random one. Taking the first candidates that merely kept clear of each other left
+            # both dowels of a pair at one end of the layer and the other end free to lift (reported; the
+            # farthest point of a layer sat 0.9 of its width from any dowel) — this keeps the randomness in
+            # where the spread starts, not in whether it covers the layer.
+            far, got = np.linalg.norm(q - q[0], axis=1), []
+            while len(got) < p["n_points"] and (not got or far.max() > clearance):
+                k = int(far.argmax()); got.append((float(q[k, 0]), float(q[k, 1])))
+                to_k = np.linalg.norm(q - q[k], axis=1)
+                far = to_k if len(got) == 1 else np.minimum(far, to_k)     # the random seed is not a dowel
+            out += got
+        return out
+
+    @staticmethod
+    def _on_lines(p, a, b, overlap):
+        """Where each 3D line someone drew crosses the plane midway between the pair."""
+        zmid = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2])) / 2; out = []
+        for ln in p["lines"]:
+            P0, P1 = to_local(a.M, [q[:3] for q in ln[:2]], z=True)
+            if abs(P1[2] - P0[2]) < 1e-9:
+                continue
+            u = (zmid - P0[2]) / (P1[2] - P0[2])
+            if 0 <= u <= 1:
+                q = P0[:2] + (P1[:2] - P0[:2]) * u
+                if overlap.contains(Point(q)):
+                    out.append((float(q[0]), float(q[1])))
+        return out
 
     def connect(self, ctx, slices):
         p = ctx.p; t = p["thickness"]; gap = p["space"]; d = p["dowel_d"]; mf = p["min_feature"]
@@ -311,7 +322,7 @@ class Stacked(Mode):
         # keep the hole's real reach from the outline, not d/2: a square's corner sits at 0.71 d, a slot's end at 0.75 d
         margin = hole_reach(d + p["slot_offset"], p["dowel_shape"]) + mf
         rod = [[round(x, 3), round(y, 3)] for x, y in dowel((0, 0), d, p["dowel_shape"]).exterior.coords[:-1]]   # the rod's section, for the 3D view
-        ctx._stack = slices
+        ctx.stack = slices
         extra, k, skipped = [], 0, 0
         tab_w, sw = (d if gap == 0 else d * 0.6), t + p["slot_offset"]    # a tab's width along its slot, the slot's width
         reach = math.hypot(tab_w, sw) / 2 if tab else margin - mf          # how far a cut reaches from its centre, any way it turns
@@ -327,15 +338,15 @@ class Stacked(Mode):
             """A full wall from the outline and from every other cut in the slice: two cuts closer than that run into
             each other and come out as one ragged opening (the reported 6 mm dowels arriving as 8 and 9 mm blobs).
             The same aligned dowel coming round again is the hole already there; a slot is not, it holds one tab."""
-            cuts = sl.__dict__.setdefault("_cutkeys", {})
-            if key in cuts:
+            if key in sl.cutkeys:
                 return not tab
-            inner = sl.__dict__.setdefault("_inner", sl.raw.buffer(-mf))
-            return inner.contains(g) and all(g.distance(c) >= mf for c in cuts.values())
+            if sl.inner is None:
+                sl.inner = sl.raw.buffer(-mf)
+            return sl.inner.contains(g) and all(g.distance(c) >= mf for c in sl.cutkeys.values())
 
         def add_cut(sl, geom, key, other, pt):   # a slice touches two pairs: the same aligned point is cut once
-            if key not in sl._cutkeys:
-                sl._cutkeys[key] = geom; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
+            if key not in sl.cutkeys:
+                sl.cutkeys[key] = geom; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
             sl.links.append((other, geom, pt))
 
         def place(a, b, i, j, x, y):
@@ -386,7 +397,7 @@ class Stacked(Mode):
         want = max(1, p["n_points"])
         for i, (a, b) in enumerate(zip(slices, slices[1:])):
             # what slice a already carries, for every placement: an aligned point repeats exactly and is kept
-            taken = [(x, y) for x, y, *_ in a.__dict__.setdefault("_cutkeys", {})]
+            taken = [(x, y) for x, y, *_ in a.cutkeys]
             pts = self.points_for_pair(ctx, a, b, i, d, margin, taken)
             got = [q for q in (place(a, b, i, j, x, y) for j, (x, y) in enumerate(pts)) if q]
             skipped += len(pts) - len(got)
@@ -403,18 +414,17 @@ class Stacked(Mode):
                 # held and the next spot holds it better (at most as many again): a dowel typed into a bunny's ear
                 # made the count, and the ear's tip lost the dowel the count used to bring it — 1.37 for 0.9 promised.
                 piece = max(as_multi(a.raw).geoms, key=lambda g: g.intersection(isl).area)
-                on = lambda a=a, piece=piece: [(x, y) for x, y, _ in a._cutkeys if piece.contains(Point(x, y))]   # noqa: E731
+                on = lambda a=a, piece=piece: [(x, y) for x, y, _ in a.cutkeys if piece.contains(Point(x, y))]   # noqa: E731
                 loose = lambda piece=piece, on=on: not tab and dowel_leverage(piece, on()) > LEVERAGE_OK          # noqa: E731
                 need = want + (sum(isl.contains(Point(q)) for q in p["dowels"]) if p["placement"] == "aligned" else 0)
                 if len(have) >= need and not loose():
                     continue
                 room = inside = isl.buffer(-(mf + reach))
-                near = [c for s in (a, b) for c in s.__dict__.get("_cutkeys", {}).values() if c.distance(isl) < mf + reach]
+                near = [c for s in (a, b) for c in s.cutkeys.values() if c.distance(isl) < mf + reach]
                 if near and not room.is_empty:
                     room = room.difference(unary_union(near).buffer(mf + reach))
                 # a dowel from the pair below can carry on up through this pair: its hole in a is already there
-                q = [] if tab else [(x, y) for x, y, _ in a._cutkeys if inside.contains(Point(x, y))
-                                    and all(np.hypot(x - m[0], y - m[1]) > 0.01 for m in have)]
+                q = [] if tab else [(x, y) for x, y, _ in a.cutkeys if inside.contains(Point(x, y)) and all(_dist((x, y), m) > 0.01 for m in have)]
                 if not room.is_empty:
                     parts = sorted(as_multi(room).geoms, key=lambda g: -g.area)
                     x0, y0, x1, y1 = room.bounds; h = max(d / 4, math.sqrt(room.area) / 20)
@@ -422,7 +432,7 @@ class Stacked(Mode):
                     q += [shapely.maximum_inscribed_circle(g, 0.1).coords[0] for g in parts]   # each room's middle first
                     q += [tuple(c) for c in grid[shapely.contains_xy(room, grid[:, 0], grid[:, 1])]]
                 def far(q, ms):                                        # farthest from the connectors in ms first
-                    q.sort(key=lambda pt: -min(np.hypot(pt[0] - m[0], pt[1] - m[1]) for m in ms))
+                    q.sort(key=lambda pt: -min(_dist(pt, m) for m in ms))
                 if have:
                     far(q, have)                                       # a second connector goes far from the first
                 mine = []
@@ -437,8 +447,22 @@ class Stacked(Mode):
                 both = a.raw.intersection(b.raw)
                 if not both.is_empty:
                     rooms.append(max(shapely.maximum_inscribed_circle(g, 0.5).length * 2 for g in as_multi(both).geoms))
-        # These two are about the whole stack, so they go in the plan's notes, not on a slice
-        said = []
+        # what went short is about the whole stack, so it goes in the plan's notes, not on a slice
+        said = self._said(p, skipped, bare, rooms, margin, d)
+        if said:
+            ctx.notes_extra = " · ".join([ctx.notes_extra] + said).strip(" ·")
+        if p["placement"] == "aligned" and p["dowels"]:
+            used = {(round(x, 2), round(y, 2)) for s in slices for x, y, *_ in s.cutkeys}
+            for x, y in p["dowels"]:
+                if (round(x, 2), round(y, 2)) not in used:
+                    slices[0].warnings.append(f"dowel point ({x:g}, {y:g}) is outside the material of every pair of slices — nothing cut; alt-click nearer the middle of a slice")
+        return extra
+
+    @staticmethod
+    def _said(p, skipped, bare, rooms, margin, d):
+        """The notes about connectors that could not be placed: points skipped for want of a wall, and pairs of
+        layers that got none — with the size that would fit them, when one would."""
+        mf = p["min_feature"]; said = []
         if skipped:
             said.append(f"{skipped} connection point(s) skipped — no spot there keeps a {mf:g} mm wall from the outline and "
                         "from the other connectors: move the points inward (alt-click) or reduce dowel_d")
@@ -458,24 +482,12 @@ class Stacked(Mode):
             # narrow strips, or all their room is inside the wall of a hole already cut — so no size is offered.
             # What is left after eroding has to be an island the placer will use, not a sliver: it keeps only those
             # of at least (d/2)² — a disc of that area has radius d/(2·√π), so that comes off the radius too.
-            reach = (margin - p["min_feature"]) / (d + p["slot_offset"])       # hole radius per mm of diameter
+            reach = (margin - mf) / (d + p["slot_offset"])       # hole radius per mm of diameter
             room = float(np.median(rooms)) if rooms else 0.0
-            fits = round((room / 2 - p["min_feature"]) / (reach + 1 / (2 * math.sqrt(math.pi))) - p["slot_offset"], 1)
+            fits = round((room / 2 - mf) / (reach + 1 / (2 * math.sqrt(math.pi))) - p["slot_offset"], 1)
             said.append(f"{bare} pair(s) of slices got no connector — a {p['dowel_d']:g} mm one does not fit them: "
                         + (f"set dowel_d to about {fits:g} mm" if MIN_DOWEL <= fits < p["dowel_d"] else
                            "they overlap only in strips too narrow to hold one — fewer slices, a thicker hollow wall, "
                            "or set connect to tab")
                         + ", or set connect to none and line them up by eye")
-        if said:
-            ctx.notes_extra = " · ".join([getattr(ctx, "notes_extra", "") or ""] + said).strip(" ·")
-        if p["placement"] == "aligned" and p["dowels"]:
-            used = {(round(x, 2), round(y, 2)) for s in slices for x, y, *_ in getattr(s, "_cutkeys", ())}
-            for x, y in p["dowels"]:
-                if (round(x, 2), round(y, 2)) not in used:
-                    slices[0].warnings.append(f"dowel point ({x:g}, {y:g}) is outside the material of every pair of slices — nothing cut; alt-click nearer the middle of a slice")
-        return extra
-
-
-def to_local_z(M, pt):
-    q = np.linalg.inv(M) @ np.array([pt[0], pt[1], pt[2], 1.0])
-    return q[:3]
+        return said

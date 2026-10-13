@@ -14,6 +14,7 @@ from shapely import affinity
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
 import shapely
+from .geometry import even_odd, min_rect_angle
 
 
 _no_engine = False   # trimesh has no triangulation engine here (the browser build): remembered, or it logs advice per piece
@@ -84,20 +85,9 @@ def text_polygons(text, height, res=8) -> MultiPolygon:
         if len(c) > 3:
             pts = [(x / res, (a.shape[0] - y) / res) for y, x in c]
             polys.append(Polygon(pts))
-    # outer contours minus inner ones (holes of 'o', 'a' …): even-odd via symmetric differences of nested polygons
-    polys.sort(key=lambda g: -g.area)
-    out = []
-    for g in polys:
-        if not g.is_valid:
-            g = g.buffer(0)
-        holder = next((h for h in out if h.contains(g.representative_point())), None)
-        if holder is None:
-            out.append(g)
-        else:
-            out[out.index(holder)] = holder.difference(g)
-    if not out:
+    if not polys:
         return MultiPolygon()
-    g = unary_union(out)
+    g = even_odd(polys)                                                  # outer contours minus inner ones (the holes of 'o', 'a' …)
     k = height / (g.bounds[3] - g.bounds[1])
     return affinity.scale(g, k, k, origin=(0, 0))
 
@@ -108,16 +98,14 @@ def label_inside(geom, text, min_h, inset=1.0):
     far as a label length when the fat spot is near an end, 1.5 × `min_h` tall where that fits and `min_h`
     otherwise. None when even `min_h` fits nowhere: the part then gets no label and the README says so, rather
     than a label too small to read or one cut into an edge."""
-    from .nest import _min_rect_angle
     txt = text_polygons(text, min_h)
     tx, ty = (txt.bounds[0] + txt.bounds[2]) / 2, (txt.bounds[1] + txt.bounds[3]) / 2
     w = txt.bounds[2] - txt.bounds[0]
-    inner = geom.buffer(-inset)
-    for g in sorted(getattr(inner, "geoms", [inner]), key=lambda g: -g.area)[:3]:
+    for g in sorted(shapely.get_parts(geom.buffer(-inset)), key=lambda g: -g.area)[:3]:
         if g.is_empty:
             continue
         cx, cy = shapely.maximum_inscribed_circle(g, 0.1).coords[0]
-        along = -_min_rect_angle(g)
+        along = -min_rect_angle(g)
         for rot in (along, along + 90):
             rot = (rot + 90) % 180 - 90                                  # never upside down
             ux, uy = np.cos(np.radians(rot)), np.sin(np.radians(rot))
@@ -141,10 +129,10 @@ def proto_part(pc, thickness, scale, labels, font, min_thick):
     label = label_inside(geom, pc["label"], font) if labels != "none" else None
     if label is not None and labels == "hole":
         geom = geom.difference(label)
-    mesh = trimesh.util.concatenate([extrude(g, t) for g in getattr(geom, "geoms", [geom]) if g.area > 0])
+    mesh = trimesh.util.concatenate([extrude(g, t) for g in shapely.get_parts(geom) if g.area > 0])
     if label is not None and labels == "groove":
         depth = min(t * 0.5, 0.6)
-        groove = trimesh.util.concatenate([extrude(g, depth + 0.01) for g in getattr(label, "geoms", [label]) if g.area > 0])
+        groove = trimesh.util.concatenate([extrude(g, depth + 0.01) for g in shapely.get_parts(label) if g.area > 0])
         groove.apply_translation([0, 0, t - depth])
         with contextlib.suppress(Exception):               # engine missing (the browser build): leave the part plain;
             mesh = trimesh.boolean.difference([mesh, groove], engine="manifold")   # named, or trimesh may wait on a Blender it finds

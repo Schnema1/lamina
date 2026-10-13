@@ -6,14 +6,15 @@ from __future__ import annotations
 import argparse, json, math, os, pathlib, shutil, threading, time
 import numpy as np
 import trimesh
+import shapely
 from shapely import affinity
 from shapely.geometry import MultiPolygon, MultiLineString, MultiPoint
 from shapely.ops import unary_union
 from .modes import load_all, Ctx
-from .geometry import section_polygons, as_multi, poly_coords, line_coords
-from .checks import STRUCTURAL, check_plan, min_dims, suggest_fixes, crossing_suggestions
+from .geometry import section_polygons, as_multi, poly_coords, line_coords, min_dims, min_rect_angle
+from .checks import STRUCTURAL, check_plan, suggest_fixes, crossing_suggestions
 from .split import split_slice, fits_rotated, islands
-from .nest import nest, _min_rect_angle
+from .nest import nest
 from .model import Piece, label_codes, label_tag
 
 MODES = load_all()
@@ -42,13 +43,6 @@ def progress(text, frac):
     _run.stages.append((text, time.perf_counter()))
     lo, hi = _run.band
     report(text, lo + frac * (hi - lo))
-
-
-def ready(path, frac):
-    """Something finished that can be shown while the rest is still being worked out — the preview mesh, so the 3D
-    view fills in instead of holding the model back until the last sheet is nested. No stage of its own: it says
-    "this is on disk now", and the stage line stays where it was."""
-    report("", frac, str(path))
 
 
 def timing() -> dict[str, float]:
@@ -198,13 +192,6 @@ def modify_form(mesh, p, notes, fine=False):
     return out
 
 
-def smooth_mesh(mesh, iterations):
-    """Taubin smoothing (volume-preserving Laplacian): softens pointy vertices without shrinking the model."""
-    m = mesh.copy()
-    trimesh.smoothing.filter_taubin(m, iterations=int(iterations))
-    return m
-
-
 ONE_SHEET_H = 100000.0     # "one sheet" mode nests against this height and reports the length actually used
 STAIRS = 3                 # Taubin passes that take the voxel staircase off a remesh: measured on the egg, three
                            # take it from 13 % of edges over 45° to 0 %, and more only thins what is already thin
@@ -231,7 +218,6 @@ def coverage(mesh, slices, r, lat=3.0):
     Dense slicings (interlocked, radial) put a slice near every point and legitimately score close to 100 %; the
     number carries the most signal for stacked and folded work.
     """
-    import shapely
     pts = mesh.sample(3000, seed=0)                      # seeded: the same model and params must give the same plan
     if len(pts) == 0:
         return 1.0
@@ -326,9 +312,9 @@ def _prepare(path, params, notes, mode):
             notes.append("mesh is not watertight and could not be mended — remeshed on a fine voxel grid and smoothed (set shrinkwrap to choose the resolution)")
         progress("modify form: remeshing", 0.06)
         mesh = modify_form(mesh, params, notes, fine=auto)
-    if params["smooth"] or auto:
+    if params["smooth"] or auto:                      # Taubin: a volume-preserving Laplacian, so pointy vertices soften and nothing shrinks
         progress("smoothing", 0.16)
-        mesh = smooth_mesh(mesh, params["smooth"] or 10)
+        mesh = mesh.copy(); trimesh.smoothing.filter_taubin(mesh, iterations=int(params["smooth"] or 10))
     mesh.apply_translation(-mesh.bounds.mean(0))
     return mesh
 
@@ -355,9 +341,21 @@ def square_up(mesh, rot):
     return [round(float(np.degrees(a)), 1) + 0.0 for a in trimesh.transformations.euler_from_matrix(R4, "sxyz")], off
 
 
-MATCH_AREA = 2.0     # mm²: the most two outlines may differ by and still be one part, however big they are. Relative
-                     # alone, 0.1 % of a 200 cm² layer let a 6 mm dowel hole a millimetre off (12 mm²) pass as the same
-                     # part, and the second copy was cut with its holes in the wrong place
+MATCH_AREA = 2.0     # mm² of symmetric difference under which two outlines are one part without further looking
+
+
+def _same_outline(c, h, tol, w=0.1):
+    """`h` is `c` as a cutter would see it: everywhere within `w` mm of it, a tenth of a millimetre, under any kerf.
+    The symmetric difference decides where it is small (one part) or past `tol` of the area (two); in between the
+    outlines are compared edge to edge — a 0.1 % allowance alone let a 6 mm dowel hole a millimetre off (12 mm² on a
+    200 cm² layer) pass as the same part, and the second copy was cut with its holes in the wrong place, while a
+    sphere's layers a few hundredths of a millimetre apart in radius are the same part to any cutter."""
+    d = c.symmetric_difference(h).area
+    if d <= MATCH_AREA:
+        return True
+    if d > tol * c.area:
+        return False
+    return c.buffer(w).covers(h) and h.buffer(w).covers(c)
 
 
 def _moved(e, rot, x0, y0):
@@ -371,15 +369,14 @@ def _match(c, g, tol, mirror, ce, ge):
     "flipped" when it only fits as its mirror image, None when it does not fit at all. What is engraved on them (`ce`,
     `ge`: guide lines, marks with their texts, in the same frames) has to coincide under that same move: two slices
     with the same outline but another layer's outline, or another seam number, marked on them are two parts."""
-    lim = min(tol * c.area, MATCH_AREA)
-    if abs(c.area - g.area) > lim:
+    if abs(c.area - g.area) > tol * c.area:
         return None
     flip = lambda x: affinity.scale(x, -1, 1, origin=(0, 0))
     tries = (("same", g, ge), ("flipped", flip(g), (flip(ge[0]), flip(ge[1]), ge[2]))) if mirror else (("same", g, ge),)   # mirrored once, not per turn
     for kind, m, me in tries:
         for r in (0, 90, 180, 270):
             h = affinity.rotate(m, r, origin=(0, 0)); x0, y0, _, _ = h.bounds
-            if c.symmetric_difference(affinity.translate(h, -x0, -y0)).area <= lim and _coincide(ce, _moved(me, r, x0, y0)):
+            if _same_outline(c, affinity.translate(h, -x0, -y0), tol) and _coincide(ce, _moved(me, r, x0, y0)):
                 return kind
     return None
 
@@ -403,7 +400,7 @@ def mark_identical(pieces, mirror=False, tol=1e-3):
     for pc in pieces:
         if any(s != "guide" for s, _ in pc.lines):  # score lines (folded panels): each fold pattern is its own part
             continue
-        a = _min_rect_angle(pc.kerfed)
+        a = min_rect_angle(pc.kerfed)
         g = affinity.rotate(pc.kerfed, a, origin=(0, 0)); x0, y0, _, _ = g.bounds; g = affinity.translate(g, -x0, -y0)
         ge = _moved((MultiLineString([ln for _, ln in pc.lines]), MultiPoint([(x, y) for x, y, _ in pc.marks]), [t for *_, t in pc.marks]), a, x0, y0)
         for first, c, ce in groups:
@@ -455,7 +452,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
             os.replace(tmp, mesh_out)
         except PermissionError:
             shutil.copyfile(tmp, mesh_out); tmp.unlink()
-        ready(mesh_out, 0.19)                     # the 3D view can show the model now: it does not wait for the slices
+        # the 3D view can show the model now, before the slices: not a stage of its own, the stage line stays put
+        report("", 0.19, str(mesh_out))
     sheet0 = list(p["sheet"])
     if p["one_sheet"]:                              # one strip as wide as the sheet, as long as it needs: nest against a huge height
         p["sheet"] = [sheet0[0], ONE_SHEET_H]
@@ -469,33 +467,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         progress("placing slices and slots" + again, 0.2)
         ctx = Ctx(mesh, p)
         slices = mode.build(ctx)
-        kept, shaved, grazed = [], 0, set()
-        for i, sl in enumerate(slices):         # sections → profiles (modes may hand over a finished `raw` for synthetic parts)
-            progress(f"sectioning{DETAIL}{i + 1} of {len(slices)}{again}", 0.35 + 0.35 * i / len(slices))
-            sectioned = sl.group in STRUCTURAL       # a plane through the model, not a part the technique draws (peg, panel, strip)
-            if sl.raw is None:
-                raw = section_polygons(mesh, sl.M)
-                if sl.clip is not None:
-                    raw = as_multi(raw.intersection(sl.clip))
-                sl.raw = raw
-            if sl.raw.is_empty:
-                sl.errors.append("plane does not hit material — dropped")
-                continue
-            g = dict(p["grow"]).get(sl.label)
-            if g:                                    # per-slice outline growth (fix for thin bridges)
-                sl.raw = as_multi(sl.raw.buffer(float(g), join_style=1))
-            prof = as_multi(sl.raw.difference(unary_union(sl.cuts))) if sl.cuts else sl.raw
-            if sectioned and not prof.is_empty:
-                prof, n = shed_slivers(sl.raw, prof, sl.cuts, p["min_feature"], p["min_part"])
-                shaved += n
-                if prof.is_empty:                    # a speck and nothing else: not a part, not an error
-                    grazed.add(sl.label)
-                    continue
-            if prof.is_empty:
-                sl.errors.append("slots/holes remove all material — dropped")
-                continue
-            sl.profile = prof
-            kept.append(sl)
+        kept, shaved, grazed = _profiles(slices, mesh, p, again)
         mode.guide_outlines(ctx, kept)                # on the finished outlines: grown, slivers shed
         dropped = [s for s in slices if s not in kept and s.label not in grazed]
         slices = kept
@@ -524,34 +496,11 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
             split_slice(sl, p["sheet"], p["sheet_margin"], p["tab"])
         else:
             sl.pieces = islands(sl) if sl.facets is None else [Piece(sl.label, sl.profile, sl, sl.lines, sl.marks)]   # a folded net stays whole
-    # every finished piece, however it was made, has to fit the sheet: a part that does not overhangs the drawing and
-    # takes a sheet to itself, so it is an error whether or not `split` was asked to cut it
-    over = [(sl, pc, *min_dims(pc.geom)) for sl in slices for pc in sl.pieces      # rotation is free on the sheet
-            if not fits_rotated(pc.geom, p["sheet"], p["sheet_margin"])]
-    if over:
-        # the size the model would have to be for its parts to fit, so "too big for my sheet" comes with the number
-        long_s, short_s = sorted((p["sheet"][0] - 2 * p["sheet_margin"], p["sheet"][1] - 2 * p["sheet_margin"]), reverse=True)
-        f = min(min(long_s / large, short_s / small) for _, _, small, large in over)
-        fit = [round(float(e) * f, 1) for e in mesh.extents]
-        fit_txt = " × ".join(f"{v:g}" for v in fit)
-        for sl, pc, small, large in over:
-            e = (f"{pc.label} does not fit the sheet ({large:.0f}×{small:.0f} mm on {sheet0[0]:g}×{sheet0[1]:g} mm) — "
-                 + ("split cannot cut a folded panel: use a smaller facet size or a bigger sheet" if sl.facets is not None
-                    else "enable split or use a bigger sheet" if not p["split"]
-                    else "even split cannot cut it small enough: use a bigger sheet or a smaller model"))
-            sl.errors.append(e)
-            # suggest_fixes has already run (the pieces only exist here), so this error brings its own fixes
-            sl.fixes.append({"error": e, "options": ([] if p["split"] else [{"title": "split oversize parts", "set": {"split": True}}])
-                             + [{"title": f"scale the model to {f:.0%} ({fit_txt} mm)", "set": {"size": fit, "scale": 1}}]
-                             + ([] if p["one_sheet"] else [{"title": "one long sheet (cut the strip apart at the machine)", "set": {"one_sheet": True}}])})
-        ctx.errors.append(f"{len(over)} part(s) are bigger than the {sheet0[0]:g} × {sheet0[1]:g} mm sheet: "
-                          f"set `size` to about {fit_txt} mm ({f:.0%} of this model)"
-                          + (", or use a bigger sheet" if p["one_sheet"] else ", use a bigger sheet, or turn on `one_sheet`"))
-        n_err += len(over) + 1
+    n_err += _oversize(slices, p, sheet0, mesh, ctx)
     pieces = [pc for sl in slices for pc in sl.pieces]
     kerf = p["kerf"] if p["compensate"] else 0.0       # off by default: many machines compensate their own kerf
     tag = label_tag(p, model_path)                     # the model's name, engraved before every label: nested with room for it
-    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["font"] * 1.6 if p["labels"] else 0, p["font"], tag, p["label_inside"])
+    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["labels"], p["font"], tag, p["label_inside"])
     mark_identical(pieces, p["mirror_ok"])             # which parts are the same part: one cut file, one row, a quantity
     # puzzle mode: what gets engraved is a code with no order in it. The plan keeps the real labels — the app, the
     # checks and the 3D view are the "plans" you consult when you give up — and the export carries the key.
@@ -564,9 +513,9 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         top = max([pc.placed.bounds[3] for pc in pieces] + [pc.label_pos[1] + p["font"] * 0.7 for pc in pieces if pc.label_pos], default=0.0) + p["sheet_margin"]
         sheet_out = [sheet0[0], float(np.ceil(top))]; p["sheet"] = sheet0
     progress("measuring coverage", 0.94)
-    cov = coverage(mesh, slices, getattr(ctx, "cover_r", max(mesh.extents) / 8), lat=max(3.0, p["thickness"]))
+    cov = coverage(mesh, slices, ctx.cover_r or max(mesh.extents) / 8, lat=max(3.0, p["thickness"]))
     progress("done", 1.0)
-    if getattr(ctx, "notes_extra", None):
+    if ctx.notes_extra:
         notes.append(ctx.notes_extra)
     if cov < 0.9:
         notes.append(f"model coverage {cov:.0%}: parts of the model have no geometry — more slices (count / spacing), a different axis, or round/thicken thin features")
@@ -576,44 +525,111 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         "legend": mode.legend,                                               # what the labels mean (Export tab, assembly key)
         "bbox": [float(e) for e in mesh.extents],
         "axes": [a.tolist() for a in ctx.ax], "mid": ctx.mid.tolist(),      # slicing frame (for click-placed points in the UI)
-        "curve3d": getattr(ctx, "curve3d", None), "curve_pts": getattr(ctx, "curve_pts", None),
-        "axes3d": getattr(ctx, "axes3d", None),                              # radial's fan axes, curve's branches: drawn and dragged in 3D
-        "bounds3d": getattr(ctx, "bounds3d", []),                            # the planes between lobes or at a branch's joint, moved and tilted like slices
-        "rods": getattr(ctx, "rods", []),                                    # dowel rods for the 3D view: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis]
+        "curve3d": ctx.curve3d, "curve_pts": ctx.curve_pts,
+        "axes3d": ctx.axes3d,                                                # radial's fan axes, curve's branches: drawn and dragged in 3D
+        "bounds3d": ctx.bounds3d,                                            # the planes between lobes or at a branch's joint, moved and tilted like slices
+        "rods": ctx.rods,                                                    # dowel rods for the 3D view: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis]
         "params_used": {k: p[k] for k in ("extra_x", "extra_y", "ring_count") if k in p},   # what autofix=add changed
         "sheets": n_sheets, "sheet": sheet_out, "sheet_thick": sheet_thick, "kerf": kerf,
         "counts": {"slices": len(slices), "parts": len(pieces), "errors": n_err, "warnings": n_warn, "faces": int(len(mesh.faces))},
         "codes": codes,                                                      # puzzle mode: engraved code → real label
         "label_tag": tag,                                                    # engraved before every label (the model's name)
-        "errors": ctx.errors, "fixes": getattr(ctx, "fixes", []),          # mode-level errors and their one-click fixes
+        "errors": ctx.errors, "fixes": ctx.fixes,                            # mode-level errors and their one-click fixes
         "square": square and {"rotate": square[0], "off": round(square[1], 1)},   # a boxy model a few degrees off its axes
         "material_area_mm2": float(sum(pc.geom.area for pc in pieces)),
         "coverage": cov,
         "timing": timing(),
-        "core_d_min": getattr(ctx, "core_d_min", None),
+        "core_d_min": ctx.core_d_min,
         "sheet_usage": float(sum(pc.geom.area for pc in pieces) / max(1e-9, n_sheets * sheet_out[0] * sheet_out[1])),
-        "slices": [{
-            "label": sl.label, "group": sl.group, "M": np.round(sl.M, 6).tolist(), "thickness": sl.thickness, "note": sl.note,
-            "engages": sl.engages, "extents": [round(sl.bbox[2] - sl.bbox[0], 2), round(sl.bbox[3] - sl.bbox[1], 2)],
-            "errors": sl.errors, "warnings": sl.warnings, "fixes": getattr(sl, "fixes", []),
-            "pieces": [{"label": pc.label, "place": list(pc.place), "bbox": [round(b, 3) for b in pc.bbox],
-                        "facets": [{"M": np.round(M, 6).tolist(), "rings": poly_coords(g)} for M, g in pc.facets],   # 3D view
-                        "kerfed": poly_coords(pc.kerfed),        # local 2D, kerf applied (per-piece export)
-                        "placed": poly_coords(pc.placed),        # sheet coordinates, kerf applied
-                        "lines": [[s, line_coords(l)[0]] for s, l in pc.placed_lines],   # fold and guide lines on the sheet
-                        "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
-                        "marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.placed_marks],
-                        "kerfed_marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.marks],
-                        "label_pos": pc.label_pos, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
-                        "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight
-                        } for pc in sl.pieces],
-        } for sl in slices],
+        "slices": [_slice_json(sl) for sl in slices],
         "dropped": [{"label": s.label, "errors": s.errors} for s in dropped],
     }
     if out:
         out = pathlib.Path(out); out.parent.mkdir(parents=True, exist_ok=True)
         out.with_suffix(".json").write_text(json.dumps(plan))
     return plan
+
+
+def _profiles(slices, mesh, p, again):
+    """Each slice sectioned and its cuts taken out: the kept slices with `profile` set, how many slivers came off, and
+    the labels of slices that only grazed the model (a speck, not a part, not an error). A slice the plane misses, or
+    whose cuts leave nothing, says so and is dropped."""
+    kept, shaved, grazed = [], 0, set()
+    for i, sl in enumerate(slices):         # sections → profiles (modes may hand over a finished `raw` for synthetic parts)
+        progress(f"sectioning{DETAIL}{i + 1} of {len(slices)}{again}", 0.35 + 0.35 * i / len(slices))
+        sectioned = sl.group in STRUCTURAL       # a plane through the model, not a part the technique draws (peg, panel, strip)
+        if sl.raw is None:
+            raw = section_polygons(mesh, sl.M)
+            if sl.clip is not None:
+                raw = as_multi(raw.intersection(sl.clip))
+            sl.raw = raw
+        if sl.raw.is_empty:
+            sl.errors.append("plane does not hit material — dropped")
+            continue
+        g = dict(p["grow"]).get(sl.label)
+        if g:                                    # per-slice outline growth (fix for thin bridges)
+            sl.raw = as_multi(sl.raw.buffer(float(g), join_style=1))
+        prof = as_multi(sl.raw.difference(unary_union(sl.cuts))) if sl.cuts else sl.raw
+        if sectioned and not prof.is_empty:
+            prof, n = shed_slivers(sl.raw, prof, sl.cuts, p["min_feature"], p["min_part"])
+            shaved += n
+            if prof.is_empty:                    # a speck and nothing else: not a part, not an error
+                grazed.add(sl.label)
+                continue
+        if prof.is_empty:
+            sl.errors.append("slots/holes remove all material — dropped")
+            continue
+        sl.profile = prof
+        kept.append(sl)
+    return kept, shaved, grazed
+
+
+def _oversize(slices, p, sheet0, mesh, ctx):
+    """Every finished piece, however it was made, has to fit the sheet: a part that does not overhangs the drawing and
+    takes a sheet to itself, so it is an error whether or not `split` was asked to cut it — with the size the model
+    would have to be for its parts to fit, so "too big for my sheet" comes with the number. Returns the errors added."""
+    over = [(sl, pc, *min_dims(pc.geom)) for sl in slices for pc in sl.pieces      # rotation is free on the sheet
+            if not fits_rotated(pc.geom, p["sheet"], p["sheet_margin"])]
+    if not over:
+        return 0
+    long_s, short_s = sorted((p["sheet"][0] - 2 * p["sheet_margin"], p["sheet"][1] - 2 * p["sheet_margin"]), reverse=True)
+    f = min(min(long_s / large, short_s / small) for _, _, small, large in over)
+    fit = [round(float(e) * f, 1) for e in mesh.extents]
+    fit_txt = " × ".join(f"{v:g}" for v in fit)
+    for sl, pc, small, large in over:
+        e = (f"{pc.label} does not fit the sheet ({large:.0f}×{small:.0f} mm on {sheet0[0]:g}×{sheet0[1]:g} mm) — "
+             + ("split cannot cut a folded panel: use a smaller facet size or a bigger sheet" if sl.facets is not None
+                else "enable split or use a bigger sheet" if not p["split"]
+                else "even split cannot cut it small enough: use a bigger sheet or a smaller model"))
+        sl.errors.append(e)
+        # suggest_fixes has already run (the pieces only exist here), so this error brings its own fixes
+        sl.fixes.append({"error": e, "options": ([] if p["split"] else [{"title": "split oversize parts", "set": {"split": True}}])
+                         + [{"title": f"scale the model to {f:.0%} ({fit_txt} mm)", "set": {"size": fit, "scale": 1}}]
+                         + ([] if p["one_sheet"] else [{"title": "one long sheet (cut the strip apart at the machine)", "set": {"one_sheet": True}}])})
+    ctx.errors.append(f"{len(over)} part(s) are bigger than the {sheet0[0]:g} × {sheet0[1]:g} mm sheet: "
+                      f"set `size` to about {fit_txt} mm ({f:.0%} of this model)"
+                      + (", or use a bigger sheet" if p["one_sheet"] else ", use a bigger sheet, or turn on `one_sheet`"))
+    return len(over) + 1
+
+
+def _slice_json(sl):
+    """A slice and its pieces as the plan carries them: the page, the 3D view, the checks and the export read this."""
+    return {
+        "label": sl.label, "group": sl.group, "M": np.round(sl.M, 6).tolist(), "thickness": sl.thickness, "note": sl.note,
+        "engages": sl.engages, "extents": [round(sl.bbox[2] - sl.bbox[0], 2), round(sl.bbox[3] - sl.bbox[1], 2)],
+        "errors": sl.errors, "warnings": sl.warnings, "fixes": sl.fixes,
+        "pieces": [{"label": pc.label, "place": list(pc.place), "bbox": [round(b, 3) for b in pc.bbox],
+                    "facets": [{"M": np.round(M, 6).tolist(), "rings": poly_coords(g)} for M, g in pc.facets],   # 3D view
+                    "kerfed": poly_coords(pc.kerfed),        # local 2D, kerf applied (per-piece export)
+                    "placed": poly_coords(pc.placed),        # sheet coordinates, kerf applied
+                    "lines": [[s, line_coords(l)[0]] for s, l in pc.placed_lines],   # fold and guide lines on the sheet
+                    "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
+                    "marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.placed_marks],
+                    "kerfed_marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.marks],
+                    "label_pos": pc.label_pos, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
+                    "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight
+                    } for pc in sl.pieces],
+    }
 
 
 def parse_set(items):

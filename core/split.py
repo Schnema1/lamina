@@ -6,8 +6,7 @@ import numpy as np
 import shapely
 from shapely.geometry import Point, Polygon, LineString, box
 from shapely.ops import unary_union
-from .geometry import as_lines, as_multi, circle
-from .checks import min_dims
+from .geometry import as_lines, as_multi, circle, min_dims
 from .model import Piece
 
 # every tab is a union and a difference on the growing piece outlines, so the count decides whether a split takes a
@@ -15,22 +14,16 @@ from .model import Piece
 MAX_PIECES = 12                       # sheets a part may span
 MAX_TABS = 24                         # tabs along one cut
 
-def fits(w, h, sheet, margin):
-    sw, sh = sheet[0] - 2 * margin, sheet[1] - 2 * margin
-    return (w <= sw and h <= sh) or (h <= sw and w <= sh)
-
-
 def fits_rotated(geom, sheet, margin):
     """Does the part fit the sheet in any orientation?
 
     The minimum-area rectangle alone is not enough: for a diagonal shape it can be longer than the axis-aligned box
     (a 500x380 panel measured 493x460 that way and was refused although it fits upright). Either box fitting suffices.
     """
+    sw, sh = sheet[0] - 2 * margin, sheet[1] - 2 * margin
+    fits = lambda w, h: (w <= sw and h <= sh) or (h <= sw and w <= sh)
     x0, y0, x1, y1 = geom.bounds
-    if fits(x1 - x0, y1 - y0, sheet, margin):
-        return True
-    small, large = min_dims(geom)
-    return fits(large, small, sheet, margin)
+    return fits(x1 - x0, y1 - y0) or fits(*min_dims(geom))
 
 
 def tab(cx, cy, along, w, depth, side):

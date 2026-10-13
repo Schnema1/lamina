@@ -36,6 +36,20 @@ panel's fold lines, and there is a Discord.
 
 ### Fixed
 
+- **A turned interlocked grid reaches the corners.** With the grid rotated (`rotate_grid`), the slices were spread
+  over the model's box, which is shorter than the model is across the turned directions, so the corners got no slice.
+  They are spread over the model's real reach along each family now.
+- **A slice auto-fix adds no longer renumbers the ones after it.** An extra interlocked slice used to take the next
+  number in line, so every slice after it moved up one and a per-slice setting (an offset, a tilt, a deleted slice)
+  landed on the wrong slice. Added slices are numbered after the family's own, and the assembly key says so.
+- **Two parts with a hole in a different place are two parts.** Identical parts are cut once with a quantity; the test
+  for "identical" allowed a difference of a thousandth of the area, which on a big layer let a dowel hole a millimetre
+  off pass, and the copy was cut with its hole in the wrong place. Outlines now have to lie within a tenth of a
+  millimetre of each other everywhere, and what is engraved on them (a guide line, a seam number) has to match too.
+- **One file per part carries the seam numbers.** Folded panels and strips engrave a number beside each seam on the
+  sheet; the one-file-per-part export left them off. They are in those files now.
+- **The guide is the layer as it is cut.** The next layer's outline, engraved on the layer below, is drawn from the
+  layer as it comes out of the cut: a sliver too thin to cut is left off it, and a dowel hole is not drawn as a ring.
 - **One file per part: the label goes where the sheet puts it.** With labels on the parts, the one-file-per-part
   export placed a part's label at its widest spot even when the sheet had put it under the next layer's outline, so
   the two disagreed and the file's label could show on the finished model. Both now use the same rule. In the same

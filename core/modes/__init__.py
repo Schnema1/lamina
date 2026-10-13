@@ -225,6 +225,13 @@ class Ctx:
         self.span = float(np.linalg.norm(self.ext)) * 2
         self.p = params
         self.errors = []          # mode-level errors (bad parameter combinations)
+        self.fixes = []           # … and their one-click fixes
+        self.notes_extra = ""     # what the technique wants said in the plan's notes
+        self.cover_r = None       # how far across its plane a part counts as covering the surface (plan.coverage); None = a default
+        # what the technique hands the 3D view: dowel rods, a curve and its points, fan axes / branches, the planes between lobes
+        self.rods, self.curve3d, self.curve_pts, self.axes3d, self.bounds3d = [], None, None, None, []
+        self.core_d_min = None    # radial: the smallest core the half-slices allow
+        self.stack, self.common_pts = [], None   # stacked: the layers in order, and the dowel points they all share (cached)
 
     def override(self, key, label, default=0.0):
         return float(dict(self.p[key]).get(label, default))

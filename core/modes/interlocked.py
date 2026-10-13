@@ -1,4 +1,5 @@
 import numpy as np
+import shapely
 from shapely.geometry import LineString, Point
 from . import Mode, Param, register
 from ..model import Slice
@@ -150,7 +151,7 @@ class Interlocked(Mode):
             c = s - (T.M[:3, 3] - mid) @ e; p0 = np.array([a, b]) * c / n2; d = np.array([-b, a]) / np.sqrt(n2)
             line = LineString([p0 - d * 1e4, p0 + d * 1e4])
             for j, g in enumerate(T.profile.geoms):
-                for part in getattr(line.intersection(g), "geoms", [line.intersection(g)]):
+                for part in shapely.get_parts(line.intersection(g)):
                     if part.length > 0.3:
                         q = part.interpolate(0.5, normalized=True)
                         hits.append((T.label, j, to_world(T.M, [(q.x, q.y)])[0]))

@@ -18,16 +18,17 @@ EXAMPLES = ROOT / "examples"
 
 def test_the_same_outline_is_not_the_same_part_with_its_holes_or_its_marks_elsewhere():
     """`mark_identical`: two 200 × 100 mm slabs with a 6 mm hole a millimetre apart are two parts, whatever the slab's
-    area makes of a millimetre (12 mm² of a 200 cm² slab is 0.06 %, under the old relative tolerance); so are two
-    strips alike in outline with another seam number engraved, or the same number elsewhere on the strip."""
+    area makes of a millimetre (12 mm² of a 200 cm² slab is 0.06 %, under the old relative tolerance) — while a slab
+    a hundredth of a millimetre bigger all round (as much area, spread along the edge) is the same part to a cutter;
+    so are two strips alike in outline with another seam number engraved, or the same number elsewhere on the strip."""
     from shapely.geometry import MultiPolygon
     from core.model import Piece, Slice
     from core.plan import mark_identical
-    slab = lambda hx: MultiPolygon([box(0, 0, 200, 100).difference(Point(hx, 50).buffer(3))])
+    slab = lambda hx, grow=0: MultiPolygon([box(-grow, -grow, 200 + grow, 100 + grow).difference(Point(hx, 50).buffer(3))])
     parent = Slice("Z-1", "S", np.eye(4), 3.0)
     piece = lambda lab, g, marks=(): Piece(lab, g, parent, [], list(marks), kerfed=g)
-    same = [piece("Z-1", slab(40)), piece("Z-2", slab(40))]; mark_identical(same)
-    assert same[0].same == ["Z-2"]
+    same = [piece("Z-1", slab(40)), piece("Z-2", slab(40)), piece("Z-3", slab(40, 0.01))]; mark_identical(same)
+    assert same[0].same == ["Z-2", "Z-3"]
     shifted = [piece("Z-1", slab(40)), piece("Z-2", slab(41))]; mark_identical(shifted)
     assert shifted[0].same == [] and shifted[1].same == []
     strip = MultiPolygon([box(0, 0, 60, 8)])

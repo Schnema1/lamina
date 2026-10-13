@@ -6,7 +6,7 @@ from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 from . import Mode, Param, register
 from .radial import Radial
-from ..geometry import as_multi, section_polygons, to_local
+from ..geometry import as_multi, frame, section_polygons, to_local
 from ..model import Slice
 from ..notch import interlock
 
@@ -75,15 +75,20 @@ class Curve(Mode):
         e2 = (V @ ev)[:, None] - C[None, :, 1]
         return float(np.sqrt((d2 ** 2 + e2 ** 2).min(1)).max())
 
+    def _centroids(self, ctx, u, eu, stations):
+        """(s, world point) of the model's section centroid at each station s along `eu`; a station the plane misses is left out."""
+        out = []
+        for s in stations:
+            F = frame(ctx.mid + eu * s, eu, up_hint=ctx.ax[(u + 2) % 3])
+            sec = section_polygons(ctx.mesh, F)
+            if not sec.is_empty:
+                c = sec.centroid; out.append((s, F[:3, :3] @ np.array([c.x, c.y, 0]) + ctx.mid + eu * s))
+        return out
+
     def default_curve(self, ctx, u, v, eu, ev):
         """A curve through the middle of the model: section centroids at 5 stations along the plane's first axis."""
-        from ..geometry import section_polygons, frame
-        L = ctx.ext[u]; pts = []
-        for s in np.linspace(-0.4, 0.4, 5) * L:
-            sec = section_polygons(ctx.mesh, frame(ctx.mid + eu * s, eu, up_hint=ctx.ax[(u + 2) % 3] if u != (u + 2) % 3 else ev))
-            if not sec.is_empty:
-                c = sec.centroid; P = frame(ctx.mid + eu * s, eu, up_hint=ctx.ax[(u + 2) % 3])[:3, :3] @ np.array([c.x, c.y, 0]) + ctx.mid + eu * s
-                pts.append([float(np.dot(P - ctx.mid, eu)), float(np.dot(P - ctx.mid, ev))])
+        L = ctx.ext[u]
+        pts = [[float(np.dot(P - ctx.mid, eu)), float(np.dot(P - ctx.mid, ev))] for _, P in self._centroids(ctx, u, eu, np.linspace(-0.4, 0.4, 5) * L)]
         m = ctx.p["margin"] or ctx.p["thickness"]
         return pts if len(pts) >= 2 else [[-L / 2 + m, 0], [L / 2 - m, 0]]
 
@@ -91,19 +96,10 @@ class Curve(Mode):
         """Where the body's centre lies across the curve plane, at each `U` along it: the section centroids' component
         along the plane normal, interpolated. A horse with its head turned has its centre 30 mm to one side there —
         the curve, the ribs and the spines follow that instead of the bounding box's middle plane."""
-        from ..geometry import section_polygons, frame
-        st, wv = [], []
-        lo, hi = -0.48 * ctx.ext[u], 0.48 * ctx.ext[u]
-        for s in np.linspace(lo, hi, 16):
-            F = frame(ctx.mid + eu * s, eu, up_hint=ctx.ax[(u + 2) % 3])
-            sec = section_polygons(ctx.mesh, F)
-            if sec.is_empty:
-                continue
-            c = sec.centroid; P = F[:3, :3] @ np.array([c.x, c.y, 0]) + ctx.mid + eu * s
-            st.append(s); wv.append(float(np.dot(P - ctx.mid, ew)))
-        if len(st) < 2:
+        got = self._centroids(ctx, u, eu, np.linspace(-0.48 * ctx.ext[u], 0.48 * ctx.ext[u], 16))
+        if len(got) < 2:
             return np.zeros(len(U))
-        return np.interp(U, st, wv)
+        return np.interp(U, [s for s, _ in got], [float(np.dot(P - ctx.mid, ew)) for _, P in got])
 
     def _branches(self, ctx, ew, C, pitch):
         """[row, start, tip, direction, length, spine normal, region, ribs] per branch, numbered by its row in the
