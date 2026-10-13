@@ -17,6 +17,8 @@
 (() => {
 const ISSUE = 'https://github.com/marcelfarres/lamina/issues/new';
 const MAIL = 'lamina.3d.app@gmail.com';        // the project's own address: a report never depends on holding an account
+// the promise every warning ends on; `how` is what the reporter still does before it goes
+const SENT = (how = 'it filled in, and you press send') => `Nothing is sent by this page: your mail program or the GitHub form opens with ${how}. An issue on GitHub is public; an email is not.`;
 const collect = {};
 window.laminaFeedback = fns => Object.assign(collect, fns);
 
@@ -39,7 +41,7 @@ const KIND = {
         ask: 'What you made', hint: '— the model, technique, material and machine, and the name or handle to credit (or "anonymous")',
         eg: 'A Roman statue relief, stacked slices in 3 mm brown cardboard on a K40. Credit: @handle on Instagram.',
         template: 'made.yml', subject: 'Made with Lamina: ', attach: 'Attach a photo or two before you send it.',
-        warn: `What goes with it: your description, the address of this page and your browser version, and the photos you attach yourself. Sending it is your OK to show the photos and the description in the gallery on the Lamina landing page, credited as you wrote above; say so if you would rather it stayed between us. Nothing is sent by this page: your mail program or the GitHub form opens with it filled in, you attach the photos and press send. An issue on GitHub is public; an email is not.`},
+        warn: `What goes with it: your description, the address of this page and your browser version, and the photos you attach yourself. Sending it is your OK to show the photos and the description in the gallery on the Lamina landing page, credited as you wrote above; say so if you would rather it stayed between us. ${SENT('it filled in, you attach the photos and press send')}`},
 };
 
 const CSS = `
@@ -62,10 +64,10 @@ const CSS = `
 // What is about to travel, said plainly before any of it does. The model is the expensive part of the promise, so
 // the sentence that matters most is in the same breath as the ask.
 const WARN = {
-  bug: `What goes with your report: the technique, every setting, what the checks said, the Lamina version, and the steps you took since loading the model (settings changed, undo, fixes, errors) — so the problem can be replayed exactly. With the box ticked the model file goes in too — that is what makes a report reproducible, so please do, unless it is a model you are not free to share. Nothing is sent by this page: your mail program or the GitHub form opens with everything filled in, and you press send. An issue on GitHub is public; an email is not.`,
-  page: `What goes with your report: your description, the address of this page and your browser version. No model and no settings — this page has none. Nothing is sent by this page: your mail program or the GitHub form opens with it filled in, and you press send. An issue on GitHub is public; an email is not.`,
-  machine: `What goes with it: the machine as selected — its name, kerf, slot offset, corner relief, tool diameter and bed size. No model, no material, no other settings. Nothing is sent by this page: your mail program or the GitHub form opens with it filled in, and you press send. An issue on GitHub is public; an email is not.`,
-  material: `What goes with it: the material as selected — its name, the thickness and sheet size in use and the ones you added for it. No model, no machine, no other settings. Nothing is sent by this page: your mail program or the GitHub form opens with it filled in, and you press send. An issue on GitHub is public; an email is not.`,
+  bug: `What goes with your report: the technique, every setting, what the checks said, the Lamina version, and the steps you took since loading the model (settings changed, undo, fixes, errors) — so the problem can be replayed exactly. With the box ticked the model file goes in too — that is what makes a report reproducible, so please do, unless it is a model you are not free to share. ${SENT('everything filled in, and you press send')}`,
+  page: `What goes with your report: your description, the address of this page and your browser version. No model and no settings — this page has none. ${SENT()}`,
+  machine: `What goes with it: the machine as selected — its name, kerf, slot offset, corner relief, tool diameter and bed size. No model, no material, no other settings. ${SENT()}`,
+  material: `What goes with it: the material as selected — its name, the thickness and sheet size in use and the ones you added for it. No model, no machine, no other settings. ${SENT()}`,
 };
 
 const FORM = k => `<form id="fb_form">
