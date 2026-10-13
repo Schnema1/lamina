@@ -15,8 +15,8 @@ import ezdxf
 import numpy as np
 import shapely
 from ezdxf import units as dxfunits
-from shapely.geometry import Polygon, box
-from .geometry import as_multi, label_box, label_spot, poly_coords
+from shapely.geometry import LineString, Polygon, box
+from .geometry import as_multi, inside_spot, label_box, poly_coords
 
 COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
@@ -76,8 +76,8 @@ def _free_spot(plan, w, h, step=10.0):
                 boxes.append((min(xs), min(ys), max(xs), max(ys)))
                 lp = pc.get("label_pos")
                 if lp:
-                    lw = 0.62 * font * len(pc["label"]) + 2
-                    boxes.append((lp[0] - lw / 2, lp[1] - font * 0.7, lp[0] + lw / 2, lp[1] + font * 0.7))
+                    lw, lh = label_box(f"{plan.get('label_tag') or ''} {pc['label']}".strip(), font)
+                    boxes.append((lp[0] - lw / 2, lp[1] - lh / 2, lp[0] + lw / 2, lp[1] + lh / 2))
         B = np.array(boxes) if boxes else np.zeros((0, 4))
         for y in np.arange(H - m - h, m - 1e-9, -step):
             for x in np.arange(W - m - w, m - 1e-9, -step):
@@ -113,16 +113,17 @@ def identical_groups(plan):
 
 
 def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
-    """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, and its label.
-    With `inside`, the label is engraved on the part itself — at its widest spot, since a lone part carries no
-    next-layer guide — and the drawing is grown so a label too big for a small part still comes out whole for the
-    maker to trim."""
+    """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, its seam
+    numbers and its label.
+    With `inside`, the label is engraved on the part itself — where the sheet puts it: under the next layer's guide
+    when the part carries one, else at its widest spot — and the drawing is grown so a label too big for a small part
+    still comes out whole for the maker to trim."""
     it = Item(pc, "kerfed", note, names, tag)
     xs = [x for _, r in it.rings for x, _ in r]; ys = [y for _, r in it.rings for _, y in r]
     x0, y0 = min(xs) - pad, min(ys) - pad
     it.rings = [(l, [(x - x0, y - y0) for x, y in r]) for l, r in it.rings]
     it.scores = [(s, [(x - x0, y - y0) for x, y in pts]) for s, pts in pc.get("kerfed_lines") or []]   # in the part's own frame, like `kerfed`
-    it.marks = []
+    it.marks = [(x - x0, y - y0, t) for x, y, t in pc.get("kerfed_marks") or []]
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
     it.leader = None
     if not inside:
@@ -131,24 +132,48 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
     lw, lh = label_box(it.label, font)
     regs = [Polygon([(px - x0, py - y0) for px, py in r[0]], [[(px - x0, py - y0) for px, py in hole] for hole in r[1:]])
             for r in pc["kerfed"]]
-    x, y, rot = label_spot(shapely.union_all(regs), lw, lh)
+    x, y, rot = inside_spot(shapely.union_all(regs), [LineString(pts) for s, pts in it.scores if s == "guide"], lw, lh)
     bw, bh = (lw, lh) if rot == 0 else (lh, lw)
     dx, dy = min(0.0, x - bw / 2 - 1), min(0.0, y - bh / 2 - 1)     # a label overrunning left/top moves the whole drawing
     if dx or dy:
         it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
         it.scores = [(s, [(qx - dx, qy - dy) for qx, qy in pts]) for s, pts in it.scores]
+        it.marks = [(mx - dx, my - dy, t) for mx, my, t in it.marks]
         x -= dx; y -= dy; w -= dx; h -= dy
     it.label_pos = (x, y, rot)
     return it, max(w, x + bw / 2 + 1), max(h, y + bh / 2 + 1)       # grow the sheet of paper so nothing is clipped
 
 
-DASH = {"solid": "", "dashed": "1.5,1", "dotted": "0.4,0.8"}
-DXF_LT = {"solid": "BYLAYER", "dashed": "DASHED", "dotted": "DOT"}
-PS_DASH = {"solid": "[] 0 setdash", "dashed": "[3 2] 0 setdash", "dotted": "[1 2] 0 setdash"}
+# The dash of each line style as (SVG dasharray in mm, PDF / PostScript dash in points, DXF linetype — its pattern is
+# defined in dxf_doc). Each format keeps its own numbers: the laser and the printer read them at different scales.
+DASH = {"solid": ((), [], "BYLAYER"), "dashed": ((1.5, 1), [3, 2], "DASHED"), "dotted": ((0.4, 0.8), [1, 2], "DOT")}
+LINE_LAYER = {"guide": "GUIDE"}      # a line's layer by its style: the next layer's outline is engraved (GUIDE), every
+                                     # fold line scored (SCORE), since a laser maps its operations by layer
 
 
-def _dash(style):
-    return DASH.get(style, "")
+def line_layer(style):
+    return LINE_LAYER.get(style, "SCORE")
+
+
+def strokes(items):
+    """Every line of the drawing, item by item, as (layer, points, closed, dash style, part key): the cut rings
+    (closed, solid), then the fold and guide lines. A style DASH does not know — "guide" — draws solid."""
+    for it in items:
+        for layer, ring in it.rings:
+            yield layer, ring, True, "solid", it.key
+        for style, pts in it.scores:
+            yield line_layer(style), pts, False, style if style in DASH else "solid", it.key
+
+
+def texts(items, font):
+    """Every text to engrave, item by item, as (x, y, rotation, text, size, leader): the marks (joint numbers, at 0.6 of
+    the font; never turned, so rotation None) then the label at `font`, with the leader line from it to its part."""
+    for it in items:
+        for x, y, t in it.marks:
+            yield x, y, None, str(t), font * 0.6, None
+        if it.label_pos:
+            x, y, rot = it.label_pos
+            yield x, y, rot, it.label, font, it.leader
 
 
 # ------------------------------------------------------------------ SVG
@@ -170,9 +195,10 @@ def thick_tag(plan, mm):
 def design_name(plan):
     """<project or model>_v<rev>: what every file of a job is named after, the zip it comes in and each file in it, so
     the cut files of two designs unzipped into one folder never mix (sheet1.svg of one over sheet1.svg of the other).
-    One word: the spaces in a file name separate part, material, thickness and quantity."""
+    One word: the spaces in a file name separate part, material, thickness and quantity. ASCII only: the zip's name
+    travels in an HTTP header, which carries nothing else."""
     p = plan["params"]
-    stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(p.get("project") or p.get("model_name") or "")).strip("_.")
+    stem = "".join(c if c.isascii() and c.isalnum() or c in "-_." else "_" for c in str(p.get("project") or p.get("model_name") or "")).strip("_.")
     return f"{stem or 'model'}_v{p.get('rev') or '1.0'}"
 
 
@@ -197,23 +223,17 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
     f = UNIT[units]
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
            f'<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{width * f:.4f}{units}" height="{height * f:.4f}{units}" viewBox="0 0 {width} {height}">']
-    for layer in ("OUTER", "INNER"):
-        out.append(f'<g id="{layer}" fill="none" stroke="{COLORS[layer]}" stroke-width="0.15">')
-        for it in items:
-            for lay, ring in it.rings:
-                if lay == layer:
-                    out.append(f'<path data-label="{it.key}" d="' + " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(ring)) + ' Z"/>')
-        out.append("</g>")
-    # Lines: the next layer's outline on a stacked slice (GUIDE, engraved) and fold lines (SCORE, scored, dashed by
-    # style) each on a layer of their own, since a laser maps its operations by layer. A layer with nothing on it is left out.
-    for layer in ("GUIDE", "SCORE"):
-        lines = [(style, pts) for it in items for style, pts in it.scores if (style == "guide") == (layer == "GUIDE")]
-        if not lines:
+    lines = list(strokes(items))
+    for layer in ("OUTER", "INNER", "GUIDE", "SCORE"):
+        on = [s for s in lines if s[0] == layer]
+        if not on and layer in ("GUIDE", "SCORE"):            # a line layer with nothing on it is left out
             continue
         out.append(f'<g id="{layer}" fill="none" stroke="{COLORS[layer]}" stroke-width="0.15">')
-        for style, pts in lines:
-            d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts))
-            out.append(f'<path d="{d}"{" stroke-dasharray=" + chr(34) + _dash(style) + chr(34) if _dash(style) else ""}/>')
+        for _, pts, closed, style, key in on:
+            d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts)) + (" Z" if closed else "")
+            tag = f' data-label="{key}"' if closed else ""
+            dash = f' stroke-dasharray="{",".join(f"{v:g}" for v in DASH[style][0])}"' if DASH[style][0] else ""
+            out.append(f'<path{tag} d="{d}"{dash}/>')
         out.append("</g>")
     if labels or border:
         out.append(f'<g id="LABEL" fill="{COLORS["LABEL"]}" stroke="{COLORS["LABEL"]}" stroke-width="0.15" font-family="sans-serif" font-size="{font}">')
@@ -222,15 +242,12 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
         if title:
             out.append(f'<text x="{font * 0.5}" y="{font * 1.2}" stroke="none">{html.escape(title)}</text>')
         if labels:
-            for it in items:
-                for mx, my, txt in it.marks:
-                    out.append(f'<text x="{mx:.2f}" y="{height - my:.2f}" font-size="{font * 0.6}" text-anchor="middle" dominant-baseline="middle" stroke="none">{html.escape(str(txt))}</text>')
-                if not it.label_pos:
-                    continue
-                lx, ly, rot = it.label_pos
-                out.append(f'<text x="{lx:.2f}" y="{height - ly:.2f}" transform="rotate({-rot} {lx:.2f} {height - ly:.2f})" text-anchor="middle" dominant-baseline="middle" stroke="none">{html.escape(it.label)}</text>')
-                if it.leader:
-                    (ax, ay), (bx, by) = it.leader
+            for x, y, rot, text, size, leader in texts(items, font):
+                # a mark is never turned and sets its own size; a label is at the group's size and says its turn
+                at = f' font-size="{size}"' if rot is None else f' transform="rotate({-rot} {x:.2f} {height - y:.2f})"'
+                out.append(f'<text x="{x:.2f}" y="{height - y:.2f}"{at} text-anchor="middle" dominant-baseline="middle" stroke="none">{html.escape(text)}</text>')
+                if leader:
+                    (ax, ay), (bx, by) = leader
                     out.append(f'<line x1="{ax:.2f}" y1="{height - ay:.2f}" x2="{bx:.2f}" y2="{height - by:.2f}"/>')
         out.append("</g>")
     out.append("</svg>")
@@ -247,20 +264,14 @@ def dxf_doc(items, labels, border=None, font=4.0, units="mm"):
     doc.linetypes.add("DOT", pattern=[0.6 * f, 0.0, -0.6 * f])
     msp = doc.modelspace()
     S = lambda pts: [(x * f, y * f) for x, y in pts]
-    for it in items:
-        for layer, ring in it.rings:
-            msp.add_lwpolyline(S(ring), close=True, dxfattribs={"layer": layer})
-        for style, pts in it.scores:
-            # guide lines (next layer's outline, stacked) go on their own layer: engraved, not scored
-            msp.add_lwpolyline(S(pts), dxfattribs={"layer": "GUIDE" if style == "guide" else "SCORE", "linetype": DXF_LT.get(style, "BYLAYER")})
-        if labels:
-            for mx, my, txt in it.marks:
-                msp.add_text(txt, height=font * 0.6 * f, dxfattribs={"layer": "LABEL"}).set_placement((mx * f, my * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
-        if labels and it.label_pos:
-            lx, ly, rot = it.label_pos
-            msp.add_text(it.label, height=font * f, dxfattribs={"layer": "LABEL", "rotation": rot}).set_placement((lx * f, ly * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
-            if it.leader:
-                msp.add_line(tuple(v * f for v in it.leader[0]), tuple(v * f for v in it.leader[1]), dxfattribs={"layer": "LABEL"})
+    for layer, pts, closed, style, _ in strokes(items):        # a cut ring takes its layer's linetype; a line names its own
+        msp.add_lwpolyline(S(pts), close=closed, dxfattribs={"layer": layer} if closed else {"layer": layer, "linetype": DASH[style][2]})
+    if labels:
+        for x, y, rot, text, size, leader in texts(items, font):
+            at = {"layer": "LABEL"} if rot is None else {"layer": "LABEL", "rotation": rot}
+            msp.add_text(text, height=size * f, dxfattribs=at).set_placement((x * f, y * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
+            if leader:
+                msp.add_line(tuple(v * f for v in leader[0]), tuple(v * f for v in leader[1]), dxfattribs={"layer": "LABEL"})
     if border:
         w, h = border
         msp.add_lwpolyline(S([(0, 0), (w, 0), (w, h), (0, h)]), close=True, dxfattribs={"layer": "LABEL"})
@@ -277,40 +288,33 @@ def pdf_doc(path, pages, labels, border, font):
         else:
             c.setPageSize((w * PT, h * PT))
         c.setLineWidth(0.3)
-        for layer in ("OUTER", "INNER"):
+        lines = list(strokes(items))
+        for layer in ("OUTER", "INNER", "SCORE", "GUIDE"):
             c.setStrokeColorRGB(*RGB[layer])
-            for it in items:
-                for lay, ring in it.rings:
-                    if lay == layer:
-                        p = c.beginPath(); p.moveTo(ring[0][0] * PT, ring[0][1] * PT)
-                        for x, y in ring[1:]: p.lineTo(x * PT, y * PT)
-                        p.close(); c.drawPath(p, stroke=1, fill=0)
-        for layer in ("SCORE", "GUIDE"):
-            c.setStrokeColorRGB(*RGB[layer])
-            for it in items:
-                for style, pts in it.scores:
-                    if (style == "guide") != (layer == "GUIDE"):
-                        continue
-                    c.setDash({"solid": [], "dashed": [3, 2], "dotted": [1, 2]}.get(style, []))
-                    p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
-                    for x, y in pts[1:]: p.lineTo(x * PT, y * PT)
-                    c.drawPath(p, stroke=1, fill=0)
+            for lay, pts, closed, style, _ in lines:
+                if lay != layer:
+                    continue
+                if not closed:
+                    c.setDash(DASH[style][1])
+                p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
+                for x, y in pts[1:]: p.lineTo(x * PT, y * PT)
+                if closed: p.close()
+                c.drawPath(p, stroke=1, fill=0)
         c.setDash([])
         c.setStrokeColorRGB(*RGB["LABEL"]); c.setFillColorRGB(*RGB["LABEL"])
         if border:
             c.rect(0, 0, w * PT, h * PT, stroke=1, fill=0)
         if labels:
-            for it in items:
-                c.setFont("Helvetica", font * 0.6 * PT)
-                for mx, my, txt in it.marks:
-                    c.drawCentredString(mx * PT, my * PT - font * 0.6 * PT * 0.35, txt)
-                if not it.label_pos:
-                    continue
-                lx, ly, rot = it.label_pos
-                c.setFont("Helvetica", font * PT)
-                c.saveState(); c.translate(lx * PT, ly * PT); c.rotate(rot); c.drawCentredString(0, -font * PT * 0.35, it.label); c.restoreState()
-                if it.leader:
-                    c.line(it.leader[0][0] * PT, it.leader[0][1] * PT, it.leader[1][0] * PT, it.leader[1][1] * PT)
+            cur = None                                        # the font is set when the size changes, not per text
+            for x, y, rot, text, size, leader in texts(items, font):
+                if size != cur:
+                    cur = size; c.setFont("Helvetica", size * PT)
+                if rot is None:
+                    c.drawCentredString(x * PT, y * PT - size * PT * 0.35, text)
+                else:
+                    c.saveState(); c.translate(x * PT, y * PT); c.rotate(rot); c.drawCentredString(0, -size * PT * 0.35, text); c.restoreState()
+                if leader:
+                    c.line(leader[0][0] * PT, leader[0][1] * PT, leader[1][0] * PT, leader[1][1] * PT)
         c.showPage()
     c.save()
 
@@ -323,29 +327,21 @@ def eps_doc(items, w, h, labels, border, font):
     def path(pts, close):
         s = " ".join(f"{x * PT:.2f} {y * PT:.2f} {'moveto' if i == 0 else 'lineto'}" for i, (x, y) in enumerate(pts))
         return f"newpath {s} {'closepath ' if close else ''}stroke"
-    for layer in ("OUTER", "INNER"):
+    lines = list(strokes(items))
+    for layer in ("OUTER", "INNER", "SCORE", "GUIDE"):
         out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
-        out += [path(ring, True) for it in items for lay, ring in it.rings if lay == layer]
-    for layer in ("SCORE", "GUIDE"):
-        out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
-        for it in items:
-            for style, pts in it.scores:
-                if (style == "guide") != (layer == "GUIDE"):
-                    continue
-                out.append(PS_DASH.get(style, PS_DASH["solid"]) + " " + path(pts, False))
+        out += [(f"[{' '.join(map(str, DASH[style][1]))}] 0 setdash " if not closed else "") + path(pts, closed)
+                for lay, pts, closed, style, _ in lines if lay == layer]
     out.append("[] 0 setdash %s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB["LABEL"]))
     if border:
         out.append(path([(0, 0), (w, 0), (w, h), (0, h)], True))
     if labels:
-        for it in items:
-            for mx, my, txt in it.marks:
-                out.append(f"gsave /Helvetica findfont {font * 0.6 * PT:.2f} scalefont setfont {mx * PT:.2f} {my * PT:.2f} translate ({txt}) dup stringwidth pop -2 div {-font * 0.6 * PT * 0.35:.2f} moveto show grestore")
-            if not it.label_pos:
-                continue
-            lx, ly, rot = it.label_pos
-            out.append(f"gsave {lx * PT:.2f} {ly * PT:.2f} translate {rot} rotate ({it.label}) dup stringwidth pop -2 div {-font * PT * 0.35:.2f} moveto show grestore")
-            if it.leader:
-                out.append(path([it.leader[0], it.leader[1]], False))
+        for x, y, rot, text, size, leader in texts(items, font):
+            # a mark is never turned and sets its own size; a label is in the header's font and says its turn
+            own, turn = (f"/Helvetica findfont {size * PT:.2f} scalefont setfont ", "") if rot is None else ("", f"{rot} rotate ")
+            out.append(f"gsave {own}{x * PT:.2f} {y * PT:.2f} translate {turn}({text}) dup stringwidth pop -2 div {-size * PT * 0.35:.2f} moveto show grestore")
+            if leader:
+                out.append(path([leader[0], leader[1]], False))
     out.append("%%EOF")
     return "\n".join(out)
 
@@ -405,7 +401,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             f = out_dir / f"{design} {stem}.{fmt}"
             if fmt == "svg": f.write_text(svg_doc(items, w, h, labels, border_, font, units, title), encoding="utf-8")
             elif fmt == "dxf": dxf_doc(items, labels, (w, h) if border_ else None, font, units).saveas(f)
-            elif fmt == "eps": f.write_text(eps_doc(items, w, h, labels, border_, font), encoding="latin-1")
+            elif fmt == "eps": f.write_text(eps_doc(items, w, h, labels, border_, font), encoding="latin-1", errors="replace")   # a label in another script: ? for its letters, not a failed export
             elif fmt == "pdf": pdf_doc(f, [(items, w, h)], labels, border_, font)
             written.append(f)
     if per_piece:                                   # identical pieces once, named "<part> <material> <thickness> x<qty>"
@@ -416,15 +412,15 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             it, w, h = item_for_piece(cpc, cnote); write(stem, [it], w, h, False)
             rows.append((f"{design} {stem}", 1, size_of(it), cnote))
         thick = {pc["label"]: sl["thickness"] for sl in plan["slices"] for pc in sl["pieces"]}
-        for pc, note, labels, flips in identical_groups(plan):
-            n = len(labels); t = thick[pc["label"]]
+        for pc, note, same, flips in identical_groups(plan):
+            n = len(same); t = thick[pc["label"]]
             # in puzzle mode the file is named after the code too: a folder of Z-1, Z-2 … gives the order away
             stem = names.get(pc["label"], pc["label"]) + mat_tag(plan) + thick_tag(plan, t) + f" x{n}"
             # the drawing carries the count and how many of them are turned over; the cut list names which ones
             it, w, h = item_for_piece(pc, " ".join(x for x in ([f"×{n}"] if n > 1 else []) + [f"({len(flips)} turned over)" if flips else "", note] if x), names=names,
                                       tag=plan.get("label_tag", ""), inside=inside, font=font)
             write(stem, [it], w, h, False)
-            also = "also " + ", ".join(names.get(l, l) for l in labels[1:]) if n > 1 else note
+            also = "also " + ", ".join(names.get(l, l) for l in same[1:]) if n > 1 else note
             rows.append((f"{design} {stem}", n, size_of(it), "; ".join(x for x in [also, "turn over " + ", ".join(names.get(l, l) for l in flips) if flips else ""] if x)))
         # one row per file: how many to cut, and each part's width × height as it lies in its file (what to check
         # against the stock, and the way to tell two parts apart that look alike)

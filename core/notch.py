@@ -8,6 +8,7 @@ slot (1 − ratio) from the other side, so the two always meet.
 from __future__ import annotations
 import math
 import numpy as np
+import shapely
 from shapely.geometry import Polygon, LineString
 from shapely.ops import unary_union
 from .geometry import plane_plane_line, line_segments_in_mesh, to_local, rect_along, circle
@@ -51,7 +52,7 @@ def _clip_segments(segments, p0, d, slices):
         for s_in, s_out in segments:
             a, b = to_local(sl.M, [p0 + d * s_in, p0 + d * s_out])
             hit = LineString([a, b]).intersection(sl.clip)
-            for ln in getattr(hit, "geoms", [hit]):
+            for ln in shapely.get_parts(hit):
                 if ln.is_empty or ln.geom_type != "LineString":
                     continue
                 c = np.asarray(ln.coords)

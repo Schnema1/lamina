@@ -387,6 +387,31 @@ def test_curve_branch_takes_its_limb_and_no_more(tmp_path):
     assert (side > 3).all() or (side < -3).all(), (side.min(), side.max())
 
 
+def test_a_turned_interlocked_grid_reaches_the_corners():
+    """`rotate_grid` 45 on the cube: along each family's normal the cube is its diagonal long, 1.41 times the box, so
+    the outer slices sit out past where the box's length would have put them, and the corners get a slice."""
+    plan = build(EXAMPLES / "cube.stl", "interlocked", {"nx": 3, "ny": 3, "rotate_grid": 45, "autofix": "off"})
+    mid = np.array(plan["mid"])
+    for fam in ("X", "Y"):
+        Ms = [np.array(s["M"]) for s in plan["slices"] if s["group"] == fam]
+        reach = max(abs(float((M[:3, 3] - mid) @ M[:3, 2])) for M in Ms)
+        assert reach > 70, (fam, reach)                                      # 180 / 2 · 1.41 · (2 / 3) ≈ 85; over the box: 60
+
+
+def test_a_slice_auto_fix_adds_does_not_renumber_the_ones_after_it():
+    """An extra first-family slice placed before X-2 is numbered after the family (X-5 on a family of 4): X-2, X-3
+    and X-4 keep their labels and their positions, so an offset, tilt or skip keyed by label stays on its slice."""
+    base = {"nx": 4, "ny": 2, "autofix": "off"}
+    plain = build(EXAMPLES / "cube.stl", "interlocked", base)
+    at = lambda plan, lab: np.array(next(s for s in plan["slices"] if s["label"] == lab)["M"])[:3, 3]
+    x2 = float((at(plain, "X-2") - np.array(plain["mid"])) @ np.array([1, 0, 0]))
+    added = build(EXAMPLES / "cube.stl", "interlocked", {**base, "extra_x": [x2 - 20]})
+    assert sorted(s["label"] for s in added["slices"] if s["group"] == "X") == ["X-1", "X-2", "X-3", "X-4", "X-5"]
+    for lab in ("X-2", "X-3", "X-4"):
+        assert np.allclose(at(plain, lab), at(added, lab)), lab
+    assert abs(float((at(added, "X-5") - np.array(added["mid"])) @ np.array([1, 0, 0])) - (x2 - 20)) < 1e-6
+
+
 @pytest.mark.parametrize("model", ["cow", "tube"])
 def test_autofix_adds_interlocked_slices_a_full_wall_from_the_others(model):
     """Found by the validation sweep: auto-fix added interlocked slices 1.6 mm from a slice of their own family (two

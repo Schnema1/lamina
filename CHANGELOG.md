@@ -52,6 +52,41 @@ panel's fold lines, and there is a Discord.
 
 ### Fixed
 
+- **A turned interlocked grid reaches the corners.** With the grid rotated (`rotate_grid`), the slices were spread
+  over the model's box, which is shorter than the model is across the turned directions, so the corners got no slice.
+  They are spread over the model's real reach along each family now.
+- **A slice auto-fix adds no longer renumbers the ones after it.** An extra interlocked slice used to take the next
+  number in line, so every slice after it moved up one and a per-slice setting (an offset, a tilt, a deleted slice)
+  landed on the wrong slice. Added slices are numbered after the family's own, and the assembly key says so.
+- **Two parts with a hole in a different place are two parts.** Identical parts are cut once with a quantity; the test
+  for "identical" allowed a difference of a thousandth of the area, which on a big layer let a dowel hole a millimetre
+  off pass, and the copy was cut with its hole in the wrong place. Outlines now have to lie within a tenth of a
+  millimetre of each other everywhere, and what is engraved on them (a guide line, a seam number) has to match too.
+- **One file per part carries the seam numbers.** Folded panels and strips engrave a number beside each seam on the
+  sheet; the one-file-per-part export left them off. They are in those files now.
+- **The guide is the layer as it is cut.** The next layer's outline, engraved on the layer below, is drawn from the
+  layer as it comes out of the cut: a sliver too thin to cut is left off it, and a dowel hole is not drawn as a ring.
+- **One file per part: the label goes where the sheet puts it.** With labels on the parts, the one-file-per-part
+  export placed a part's label at its widest spot even when the sheet had put it under the next layer's outline, so
+  the two disagreed and the file's label could show on the finished model. Both now use the same rule. In the same
+  export, turning labels off was ignored for every part but the scale-check bar; the files are plain again when asked.
+- **A part cut into strips keeps its guide.** A stacked slice too big for the sheet, split into strips, lost the next
+  layer's outline on every strip. Each strip now carries the part of the line that lies on it.
+- **The guide closes where the layers share an edge.** Where the layer above sat exactly on an edge of the layer
+  below, that side of its outline could be lost to rounding, so the engraved ring stayed open and the label could not
+  find its way under it. The whole ring is kept.
+- **The browser version's downloads do what the server's do.** In the version that runs in the browser, leaving the
+  assembly key out of a puzzle export had no effect, the fit test downloads (print and cut) answered "not found", and
+  the prototype's font size, minimum thickness and slot offset reached the wrong settings. All four behave as they do
+  with the local version.
+- **A model named in another script exports.** A model or project named with an umlaut or in Chinese made every
+  download fail after a good slice, and the EPS export failed on its own. The files are named in plain letters, the
+  label is engraved as typed where the format allows, and the EPS writes a ? for a letter it cannot carry.
+- **One long sheet is as long as its labels.** With `one_sheet`, the topmost part's label sat past the end of the
+  sheet, where the cut file cut it off. The sheet's length now includes the labels.
+- **What a technique says about a slice is shown.** A dowel typed outside every layer, a folded seam with no room for
+  its joint, a joint made smaller to fit: these messages were written on the slice and then wiped before the checks
+  ran, so they never reached the Checks tab. They show now.
 - **Installing Lamina on a fresh computer works again.** A brand-new Python came out this week that three of
   Lamina's libraries have no builds for yet, and the installer picked it, so the start script stopped with a
   compiler error. The starters now ask for the Python Lamina is tested on, and an install on the newest Python

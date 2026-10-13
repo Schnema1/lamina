@@ -193,6 +193,18 @@ def test_a_layer_in_separate_islands_is_cut_as_separate_parts(tmp_path):
             assert x1 - x0 < 60 and y1 - y0 < 60, (pc["label"], x1 - x0, y1 - y0)   # one 50 mm block, not both
 
 
+def test_one_sheet_is_as_long_as_the_parts_and_their_labels():
+    """`one_sheet` reports the strip at the length it took: the topmost part's label, placed above it, is on the sheet
+    too, not past its end where the cut file would clip it."""
+    from core.geometry import label_box
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off", "one_sheet": True, "font": 10})
+    font = plan["params"]["font"]
+    for pc in (pc for sl in plan["slices"] for pc in sl["pieces"]):
+        x, y, rot = pc["label_pos"]
+        w, h = label_box(f"{plan['label_tag']} {pc['label']}".strip(), font)
+        assert y + (h if rot == 0 else w) / 2 <= plan["sheet"][1], (pc["label"], pc["label_pos"], plan["sheet"])
+
+
 def test_labels_inside_sit_on_their_part_and_a_lone_part_file_grows_to_hold_one(tmp_path):
     """`label_inside`: every label is engraved on its own part — its centre inside the part's placed outline, with no
     leader line — while the default still puts it beside the part with a leader. In the one-file-per-part export a

@@ -20,8 +20,7 @@ from collections import defaultdict
 import numpy as np
 import shapely
 from shapely.geometry import Polygon
-from .geometry import frame_xy
-from .checks import min_dims
+from .geometry import frame_xy, min_dims
 
 STRATEGIES = ("flat", "strip", "area")
 
@@ -44,11 +43,6 @@ def rigid(la, lb, La, Lb):
     c, s = math.cos(th), math.sin(th)
     R = np.array([[c, -s], [s, c]])
     return R, La - R @ la
-
-
-def cloud_dims(pts):
-    """Side lengths of the smallest rotated rectangle around a point cloud (sorted)."""
-    return min_dims(shapely.MultiPoint(pts))
 
 
 class Panel:
@@ -133,7 +127,7 @@ def unfold_once(mesh, split, max_faces, max_dims, weights, local):
                       max(boxes[:, 2].max(), b[2]), max(boxes[:, 3].max(), b[3]))
                 w, h = bb[2] - bb[0], bb[3] - bb[1]
                 if not ((w <= max(max_dims) and h <= min(max_dims)) or (w <= min(max_dims) and h <= max(max_dims))):
-                    sm, lg = cloud_dims(np.vstack(pts + [tri]))
+                    sm, lg = min_dims(shapely.MultiPoint(np.vstack(pts + [tri])))
                     if sm > min(max_dims) or lg > max(max_dims):
                         continue                            # would not fit the sheet → seam
             visited.add(to); pn.faces.append(to)

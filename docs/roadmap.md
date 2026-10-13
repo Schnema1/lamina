@@ -184,7 +184,12 @@ off the spine, stays off it and is held by its own half-slices; only when no rin
 the job say so. Its rings share the neighbours' lines, so they go on the spine first (a warning says the slots
 overlap).
 
-Tests to add next (what the coverage report shows untested, 88 % of core + web at the time of writing): the
-`lines` connector placement of stacked, the fix options of the assembly checks (`core/checks.py` 300–320), the
-CadQuery import (needs the `cad` extra in CI), the EPS writer's label path.
+Tests to add next (the 0.2.4 coverage run, and the 2026-10-13 review of the suite): interlocked is the least covered
+technique (47 % of `core/modes/interlocked.py`; no test measures a slot's width, depth or dogbone against the
+thickness and slot offset, and `crossing_fix` / `hold` are never entered); the `lines` connector placement of stacked;
+the fix options of the assembly checks and `check_collisions` on a hand-made overlap; a per-piece DXF and EPS parsed
+back (only the sheet SVG and one DXF are parsed today); units other than mm in the DXF header and EPS; the CadQuery
+import (needs the `cad` extra in CI). `tests/test_unfold.py`'s CASES table of real-mesh unfolds only runs by hand
+(`python tests/test_unfold.py`), never under pytest: parametrize it. The suite has no `conftest.py`: `EXAMPLES`, the
+`jobs` fixture and the piece / error flatteners are redefined per file.
 

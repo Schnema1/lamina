@@ -19,10 +19,11 @@ import numpy as np
 import shapely
 from shapely import affinity
 from scipy.ndimage import binary_erosion, distance_transform_edt
-from shapely.geometry import LineString, Point, Polygon, box
+from shapely.geometry import LineString, Point, box
 from shapely.ops import split
+from shapely.geometry.polygon import orient
 from shapely.strtree import STRtree
-from .geometry import as_multi, label_box, label_spot
+from .geometry import as_multi, inside_spot, label_box, min_rect_angle
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -42,22 +43,18 @@ POCKET = 2.0        # mm: the convex pieces of an outline may overrun its concav
                     # every 2·sqrt(2·radius·POCKET), which is what the count of pieces, and the nesting time, follow
 
 
-def _min_rect_angle(geom):
-    r = geom.minimum_rotated_rectangle
-    if r.geom_type != "Polygon":
-        return 0.0
-    c = np.asarray(r.exterior.coords); e = c[1:] - c[:-1]
-    i = int(np.argmax(np.hypot(e[:, 0], e[:, 1])))
-    return -math.degrees(math.atan2(e[i, 1], e[i, 0]))
-
-
-def _xf(pc, rot, dx, dy):
+def _put(pc, sheet_i, rot, dx, dy, at=None):
+    """The piece placed: on sheet `sheet_i`, turned `rot` and moved by (dx, dy), its outline, lines and marks moved
+    with it. `place` says where it sits — its corner, or `at` where the caller means a spot (the margin)."""
     T = lambda g: affinity.translate(affinity.rotate(g, rot, origin=(0, 0)), dx, dy)
-    return as_multi(T(pc.kerfed)), [(s, T(l)) for s, l in pc.lines], [(*T(Point(x, y)).coords[0], t) for x, y, t in pc.marks]
+    geom = as_multi(T(pc.kerfed))
+    pc.placed, pc.placed_lines, pc.placed_marks = geom, [(s, T(l)) for s, l in pc.lines], [(*T(Point(x, y)).coords[0], t) for x, y, t in pc.marks]
+    pc.place = (sheet_i, *(at or geom.bounds[:2]), rot)
+    return geom
 
 
 def _hull(geom):
-    return _ccw(np.asarray(geom.convex_hull.exterior.coords)[:-1])
+    return np.asarray(orient(geom.convex_hull).exterior.coords)[:-1]       # counter-clockwise, closing point dropped
 
 
 def _convex_pieces(geom, tol, cap):
@@ -101,11 +98,6 @@ def _convex_pieces(geom, tol, cap):
             out.append(_hull(p)); continue
         todo += halves
     return out
-
-
-def _ccw(c):
-    x, y = c[:, 0], c[:, 1]
-    return c if np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)) >= 0 else c[::-1]
 
 
 def _rot(pieces, deg):
@@ -231,23 +223,19 @@ def _rect_nest(prepared, sheet, gap, margin):
         # each rectangle is the part plus one gap, in a bin one gap wider than the sheet inside its margins: the part
         # sits at the rectangle's corner, so the gap falls between neighbours and the last one ends at the margin.
         # Centred in its rectangle, every part on the far edges ran half a gap into the margin.
-        dx, dy = margin + x - g.bounds[0], margin + y - g.bounds[1]
-        geom, lines, marks = _xf(pc, rot, dx, dy)
-        pc.place = (b, geom.bounds[0], geom.bounds[1], rot)
-        pc.placed, pc.placed_lines, pc.placed_marks = geom, lines, marks
+        geom = _put(pc, b, rot, margin + x - g.bounds[0], margin + y - g.bounds[1])
         sheets.setdefault(b, Sheet(sheet[0], sheet[1], margin)).add(geom, pc)
         done.add(i)
     n = max(sheets) + 1 if sheets else 0
     for i, (pc, rot0) in enumerate(prepared):                  # bigger than a whole sheet (already flagged)
         if i not in done:
             g = affinity.rotate(pc.kerfed, rot0, origin=(0, 0))
-            geom, lines, marks = _xf(pc, rot0, margin - g.bounds[0], margin - g.bounds[1])
-            pc.place = (n, margin, margin, rot0); pc.placed, pc.placed_lines, pc.placed_marks = geom, lines, marks
+            geom = _put(pc, n, rot0, margin - g.bounds[0], margin - g.bounds[1], at=(margin, margin))
             sheets.setdefault(n, Sheet(sheet[0], sheet[1], margin)).add(geom, pc); n += 1
     return [sheets[k] for k in sorted(sheets)]
 
 
-def nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag="", label_inside=False):
+def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", label_inside=False):
     """Sets piece.place, .kerfed, .placed(+lines, marks), .label_pos, .leader. Returns sheet count.
 
     One sheet is one stock thickness. A part whose thickness was changed is cut from another piece of material, so
@@ -256,31 +244,34 @@ def nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag="", la
     for pc in pieces:
         by_thick.setdefault(round(pc.parent.thickness, 6), []).append(pc)
     if len(by_thick) < 2:
-        return _nest(pieces, sheet, gap, margin, kerf, label_h, font, tag, label_inside)
+        return _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside)
     n = 0
     for t in sorted(by_thick):
         group = by_thick[t]
-        used = _nest(group, sheet, gap, margin, kerf, label_h, font, tag, label_inside)
+        used = _nest(group, sheet, gap, margin, kerf, labels, font, tag, label_inside)
         for pc in group:
             pc.place = (pc.place[0] + n, *pc.place[1:])      # each group numbered after the ones before it
         n += used
     return n
 
 
-def _nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag="", label_inside=False):
-    W, H = sheet
-    k = kerf / 2; half = gap / 2
+def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside):
+    k = kerf / 2
     prepared = []
     for pc in pieces:
         pc.kerfed = as_multi(pc.geom.buffer(k, join_style=2)) if k else pc.geom
-        rot0 = _min_rect_angle(pc.kerfed)
-        prepared.append((pc, rot0))
-    if len(prepared) > MANY:
-        sheets = _rect_nest(prepared, sheet, gap, margin)
-        if label_h:
-            for sh in sheets:
-                place_labels(sh, font, tag, label_inside)
-        return max(1, len(sheets))
+        prepared.append((pc, min_rect_angle(pc.kerfed)))
+    sheets = _rect_nest(prepared, sheet, gap, margin) if len(prepared) > MANY else _poly_nest(prepared, sheet, gap, margin)
+    if labels:
+        for sh in sheets:
+            place_labels(sh, font, tag, label_inside)
+    return max(1, len(sheets))
+
+
+def _poly_nest(prepared, sheet, gap, margin):
+    """Every part on the first sheet with room for it, at the lowest-left spot of its free region (see the module
+    docstring), largest first; a part bigger than a sheet takes the sheet it lands on to itself."""
+    W, H = sheet; half = gap / 2
     order = sorted(range(len(prepared)), key=lambda i: -prepared[i][0].kerfed.area)
     sheets = [Sheet(W, H, margin)]
     for i in order:
@@ -321,21 +312,15 @@ def _nest(pieces, sheet, gap, margin, kerf=0.0, label_h=0.0, font=4.0, tag="", l
             # 485 mm off a 600 × 400 sheet, with nothing said
             b = affinity.rotate(pc.kerfed, rot0, origin=(0, 0)).bounds
             dx, dy = margin - b[0], margin - b[1]
-            geom, lines, marks = _xf(pc, rot0, dx, dy)
-            pc.place = (len(sheets) - 1, margin, margin, rot0); pc.placed, pc.placed_lines, pc.placed_marks = geom, lines, marks
+            _put(pc, len(sheets) - 1, rot0, dx, dy, at=(margin, margin))
             # with its convex pieces, like any other part: without them the sheet reads as empty and the next parts
             # are nested on top of it — the oversize part overhangs the sheet, it does not share it
             sh.add(affinity.translate(affinity.rotate(grown, rot0, origin=(0, 0)), dx, dy), pc, [p + (dx, dy) for p in turned[0]])
             continue
         _, r, x, y = best
-        geom, lines, marks = _xf(pc, rot0 + r, x, y)
-        pc.place = (sheets.index(sh), geom.bounds[0], geom.bounds[1], rot0 + r)
-        pc.placed, pc.placed_lines, pc.placed_marks = geom, lines, marks
+        _put(pc, sheets.index(sh), rot0 + r, x, y)
         sh.add(affinity.translate(affinity.rotate(grown, rot0 + r, origin=(0, 0)), x, y), pc, [p + (x, y) for p in turned[r]])
-    if label_h:
-        for sh in sheets:
-            place_labels(sh, font, tag, label_inside)
-    return len(sheets)
+    return sheets
 
 
 def place_labels(sh, font, tag="", inside=False):
@@ -346,8 +331,8 @@ def place_labels(sh, font, tag="", inside=False):
     the one thing that never happens is a part coming out with no label at all."""
     text = lambda pc: f"{tag} {pc.label}" if tag else pc.label        # `tag`: the model name engraved first
     if inside:
-        for pc in sh.pieces:
-            pc.label_pos = inside_spot(pc, *label_box(text(pc), font))   # engraved on the part: no leader line to it
+        for pc in sh.pieces:                                        # engraved on the part: no leader line to it
+            pc.label_pos = inside_spot(pc.placed, [ln for s, ln in pc.placed_lines if s == "guide"], *label_box(text(pc), font))
             pc.leader = None
         return
     tree = STRtree(sh.placed)
@@ -377,26 +362,3 @@ def place_labels(sh, font, tag="", inside=False):
         q = near.interpolate(near.project(anchor))
         pc.label_pos = (lx, ly, rot)
         pc.leader = ((lx, ly), (q.x, q.y))
-
-
-def inside_spot(pc, w, h):
-    """Where to engrave a w × h label on a placed part: inside the next layer's outline when the piece carries one
-    (the stacked guide), so the layer glued on top hides it, otherwise on the part's own widest spot. The next layer's
-    footprint is rebuilt from the piece's guide lines — the ring they enclose — and only used if the label fits inside
-    it. A label that fits nowhere is still given the part's widest clearance rather than left off, so the maker trims
-    it in the laser software instead of finding a part they cannot place."""
-    region = as_multi(pc.placed)
-    if region.is_empty:
-        return (0.0, 0.0, 0)
-    cover = None
-    guides = [ln for s, ln in pc.placed_lines if s == "guide"]
-    if guides:
-        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
-        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
-        # not covered, so a label there would show through
-        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
-        if loops:
-            under = shapely.union_all(loops).intersection(region)
-            if not under.is_empty:
-                cover = under
-    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part

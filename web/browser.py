@@ -35,11 +35,19 @@ def handle(method: str, path: str, query: str, form) -> tuple[int, dict, bytes]:
             return 200, {"content-type": mimetypes.guess_type(p.name)[0] or "application/octet-stream"}, p.read_bytes()
         elif path.startswith("api/job/"):
             _, _, client, job, what = path.split("/", 4)
-            out = {"export": lambda: A.job_export(client, job, q.get("fmt", "svg,dxf"), int(q.get("labels", 1)), int(q.get("per_piece", 0)), units=q.get("units", "")),
-                   "stl": lambda: A.job_stl(client, job, q.get("part", "")),
-                   "source": lambda: A.job_source(client, job),
-                   "proto": lambda: A.job_proto(client, job, float(q.get("scale", 1)), float(q.get("size", 0)), q.get("labels", "groove"), float(q.get("min_thick", 1.2))),
-                   }.get(what, lambda: (_ for _ in ()).throw(HTTPException(404)))()
+            # by name, as the server binds a query: a value in the wrong slot is a prototype with the wrong font
+            F = lambda k, d: float(q.get(k, d)); I = lambda k, d: int(q.get(k, d))
+            proto = dict(scale=F("scale", 1), size=F("size", 0), labels=q.get("labels", "groove"), font=F("font", 5),
+                         min_thick=F("min_thick", 1.2), offset=F("offset", 0.2))
+            routes = {"export": lambda: A.job_export(client, job, q.get("fmt", "svg,dxf"), I("labels", 1), I("per_piece", 0), I("key", 1), q.get("units", "")),
+                      "stl": lambda: A.job_stl(client, job, q.get("part", "")),
+                      "source": lambda: A.job_source(client, job),
+                      "proto": lambda: A.job_proto(client, job, **proto),
+                      "fit": lambda: A.job_fit(client, job, **proto, step=F("step", 0.1)),
+                      "fitcut": lambda: A.job_fitcut(client, job, q.get("fmt", "svg,dxf"), I("labels", 1), F("step", 0.1), q.get("units", ""))}
+            if what not in routes:
+                raise HTTPException(404)
+            out = routes[what]()
         else:
             raise HTTPException(404)
     except HTTPException as e:
