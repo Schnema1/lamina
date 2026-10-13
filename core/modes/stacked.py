@@ -103,11 +103,16 @@ class Stacked(Mode):
         "guide", which the export draws on its own GUIDE layer (engrave, not cut or score). plan.build calls this once
         the outlines are final — grown where asked, slivers shed, slots and holes taken out of `profile` — so the line
         is the layer as it will be cut, inner edges of a hollow layer included."""
+        if not ctx.p.get("next_outline"):
+            return
         off = ctx.p["next_outline_offset"]
+        slices = [s for s in slices if s.group == "S"]            # the layers, not the pegs or spacers between them
         for a, b in zip(slices, slices[1:]):
             A = np.linalg.inv(a.M) @ b.M                      # b's local xy → a's local xy
             tf = [A[0, 0], A[0, 1], A[1, 0], A[1, 1], A[0, 3], A[1, 3]]
-            clip = a.profile                                  # the material: slots and dowel holes leave nothing to engrave
+            # the material: slots and dowel holes leave nothing to engrave. Widened by a hair, mitred: an edge the two
+            # layers share lands a rounding error outside the exact outline and the ring would lose that side
+            clip = a.profile.buffer(1e-6, join_style=2)
             for poly in as_multi(b.raw).geoms:
                 placed = shapely.affinity.affine_transform(poly, tf)
                 # The guide sits on the next layer's true edge; a negative `next_outline_offset` pulls it in, so the
@@ -429,8 +434,7 @@ class Stacked(Mode):
                 both = a.raw.intersection(b.raw)
                 if not both.is_empty:
                     rooms.append(max(shapely.maximum_inscribed_circle(g, 0.5).length * 2 for g in as_multi(both).geoms))
-        # These two go in the plan's notes, not on a slice: check_plan clears every slice's warnings before it runs,
-        # so a message a mode leaves there never reaches anyone.
+        # These two are about the whole stack, so they go in the plan's notes, not on a slice
         said = []
         if skipped:
             said.append(f"{skipped} connection point(s) skipped — no spot there keeps a {mf:g} mm wall from the outline and "

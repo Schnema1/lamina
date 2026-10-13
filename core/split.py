@@ -3,9 +3,10 @@ separate islands into one piece per island."""
 from __future__ import annotations
 import math
 import numpy as np
-from shapely.geometry import MultiPolygon, Point, Polygon, LineString, box
+import shapely
+from shapely.geometry import Point, Polygon, LineString, box
 from shapely.ops import unary_union
-from .geometry import as_multi, circle
+from .geometry import as_lines, as_multi, circle
 from .checks import min_dims
 from .model import Piece
 
@@ -105,16 +106,25 @@ def _strips(profile, axis, sheet, margin, tab_w, sl):
     return [as_multi(g) for g in pieces_geom if not g.is_empty]
 
 
+def pieces_of(sl, geoms):
+    """One piece per geometry, named Z-1-1, Z-1-2 … Each mark goes with the piece nearest it; each line with the piece
+    it lies on, cut to it — a split's cut runs through a guide line, an island's lines are its own — and merged back
+    into one line per ring, since a line along a polygon's edge comes back from GEOS cut at every vertex. The piece is
+    widened by a hair for the cut, so a line on its very edge is kept whole rather than lost to rounding."""
+    near = lambda g: min(range(len(geoms)), key=lambda i: geoms[i].distance(g))
+    on = lambda g: [(s, part) for s, ln in sl.lines for part in as_lines(shapely.line_merge(as_lines(ln.intersection(g.buffer(1e-6))))).geoms
+                    if part.length > 1e-6]
+    return [Piece(f"{sl.label}-{i + 1}", as_multi(g), sl, on(g), [m for m in sl.marks if near(Point(m[:2])) == i]) for i, g in enumerate(geoms)]
+
+
 def islands(sl):
     """The slice as cut: one piece per island, named like a split (Z-1-1, Z-1-2 …). A layer that falls apart into
     separate shapes — the three lobes of the wavy torus's end layers — used to be one part, nested as one rigid group
-    with the empty space between its lobes and labelled once. Each line and mark goes with the island nearest it."""
+    with the empty space between its lobes and labelled once."""
     geoms = list(as_multi(sl.profile).geoms)
     if len(geoms) == 1:
         return [Piece(sl.label, sl.profile, sl, sl.lines, sl.marks)]
-    near = lambda g: min(range(len(geoms)), key=lambda i: geoms[i].distance(g))
-    return [Piece(f"{sl.label}-{i + 1}", MultiPolygon([g]), sl, [ln for ln in sl.lines if near(ln[1]) == i],
-                  [m for m in sl.marks if near(Point(m[:2])) == i]) for i, g in enumerate(geoms)]
+    return pieces_of(sl, geoms)
 
 
 def split_slice(sl, sheet, margin, tab_w):
@@ -136,5 +146,5 @@ def split_slice(sl, sheet, margin, tab_w):
         if len(cut) == len(geoms):                       # nothing could be cut further (MAX_PIECES): the slice said so
             break
         geoms = cut
-    sl.pieces = [Piece(f"{sl.label}-{i + 1}", g, sl) for i, g in enumerate(geoms)]
+    sl.pieces = pieces_of(sl, geoms)
     sl.warnings.append(f"split into {len(sl.pieces)} pieces ({w:.0f}×{h:.0f} mm does not fit the sheet)")

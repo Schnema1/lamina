@@ -147,17 +147,39 @@ def label_box(text, font):
 def label_spot(mp, w, h, prefer=None):
     """Where to put a w × h label on a part: the centre of a block that lies inside `prefer` (when given) or `mp` —
     tried upright and turned 90° — or, when no whole block fits, the widest spot there is, so a label is never left
-    off. Returns (x, y, rotation in degrees). Shared by the sheet placement and the per-piece export so both put a
-    label in the same place."""
+    off. Returns (x, y, rotation in degrees)."""
+    mp = as_multi(mp)
+    if mp.is_empty:
+        return (0.0, 0.0, 0)
     for cand in (prefer, mp):
         if cand is None or cand.is_empty:
             continue
         spot = _fits_block(cand, w, h)
         if spot:
             return spot
-    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in as_multi(mp).geoms), key=lambda c: c.length, default=None)
-    p = best.coords[0] if best is not None else as_multi(mp).representative_point().coords[0]
-    return (float(p[0]), float(p[1]), 0)
+    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in mp.geoms), key=lambda c: c.length)
+    return (float(best.coords[0][0]), float(best.coords[0][1]), 0)
+
+
+def inside_spot(region, guides, w, h):
+    """Where to engrave a w × h label on a part: inside the next layer's outline when the part carries one (`guides`,
+    the stacked guide lines, in `region`'s frame), so the layer glued on top hides it, otherwise on the part's own
+    widest spot. The next layer's footprint is rebuilt from the guide lines — the ring they enclose — and only used if
+    the label fits inside it. A label that fits nowhere is still given the part's widest clearance rather than left
+    off, so the maker trims it in the laser software instead of finding a part they cannot place. The sheet placement
+    and the per-piece export both come through here, so a part's label lands in the same place in both."""
+    region = as_multi(region)
+    cover = None
+    if guides:
+        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
+        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
+        # not covered, so a label there would show through
+        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
+        if loops:
+            under = shapely.union_all(loops).intersection(region)
+            if not under.is_empty:
+                cover = under
+    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part
 
 
 def _fits_block(mp, w, h):

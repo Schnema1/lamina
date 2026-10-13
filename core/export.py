@@ -15,8 +15,8 @@ import ezdxf
 import numpy as np
 import shapely
 from ezdxf import units as dxfunits
-from shapely.geometry import Polygon, box
-from .geometry import as_multi, label_box, label_spot, poly_coords
+from shapely.geometry import LineString, Polygon, box
+from .geometry import as_multi, inside_spot, label_box, poly_coords
 
 COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
@@ -76,8 +76,8 @@ def _free_spot(plan, w, h, step=10.0):
                 boxes.append((min(xs), min(ys), max(xs), max(ys)))
                 lp = pc.get("label_pos")
                 if lp:
-                    lw = 0.62 * font * len(pc["label"]) + 2
-                    boxes.append((lp[0] - lw / 2, lp[1] - font * 0.7, lp[0] + lw / 2, lp[1] + font * 0.7))
+                    lw, lh = label_box(f"{plan.get('label_tag') or ''} {pc['label']}".strip(), font)
+                    boxes.append((lp[0] - lw / 2, lp[1] - lh / 2, lp[0] + lw / 2, lp[1] + lh / 2))
         B = np.array(boxes) if boxes else np.zeros((0, 4))
         for y in np.arange(H - m - h, m - 1e-9, -step):
             for x in np.arange(W - m - w, m - 1e-9, -step):
@@ -114,9 +114,9 @@ def identical_groups(plan):
 
 def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
     """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, and its label.
-    With `inside`, the label is engraved on the part itself — at its widest spot, since a lone part carries no
-    next-layer guide — and the drawing is grown so a label too big for a small part still comes out whole for the
-    maker to trim."""
+    With `inside`, the label is engraved on the part itself — where the sheet puts it: under the next layer's guide
+    when the part carries one, else at its widest spot — and the drawing is grown so a label too big for a small part
+    still comes out whole for the maker to trim."""
     it = Item(pc, "kerfed", note, names, tag)
     xs = [x for _, r in it.rings for x, _ in r]; ys = [y for _, r in it.rings for _, y in r]
     x0, y0 = min(xs) - pad, min(ys) - pad
@@ -131,7 +131,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
     lw, lh = label_box(it.label, font)
     regs = [Polygon([(px - x0, py - y0) for px, py in r[0]], [[(px - x0, py - y0) for px, py in hole] for hole in r[1:]])
             for r in pc["kerfed"]]
-    x, y, rot = label_spot(shapely.union_all(regs), lw, lh)
+    x, y, rot = inside_spot(shapely.union_all(regs), [LineString(pts) for s, pts in it.scores if s == "guide"], lw, lh)
     bw, bh = (lw, lh) if rot == 0 else (lh, lw)
     dx, dy = min(0.0, x - bw / 2 - 1), min(0.0, y - bh / 2 - 1)     # a label overrunning left/top moves the whole drawing
     if dx or dy:
@@ -145,10 +145,16 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
 DASH = {"solid": "", "dashed": "1.5,1", "dotted": "0.4,0.8"}
 DXF_LT = {"solid": "BYLAYER", "dashed": "DASHED", "dotted": "DOT"}
 PS_DASH = {"solid": "[] 0 setdash", "dashed": "[3 2] 0 setdash", "dotted": "[1 2] 0 setdash"}
+LINE_LAYER = {"guide": "GUIDE"}      # a line's layer by its style: the next layer's outline is engraved (GUIDE), every
+                                     # fold line scored (SCORE), since a laser maps its operations by layer
 
 
 def _dash(style):
     return DASH.get(style, "")
+
+
+def line_layer(style):
+    return LINE_LAYER.get(style, "SCORE")
 
 
 # ------------------------------------------------------------------ SVG
@@ -170,9 +176,10 @@ def thick_tag(plan, mm):
 def design_name(plan):
     """<project or model>_v<rev>: what every file of a job is named after, the zip it comes in and each file in it, so
     the cut files of two designs unzipped into one folder never mix (sheet1.svg of one over sheet1.svg of the other).
-    One word: the spaces in a file name separate part, material, thickness and quantity."""
+    One word: the spaces in a file name separate part, material, thickness and quantity. ASCII only: the zip's name
+    travels in an HTTP header, which carries nothing else."""
     p = plan["params"]
-    stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(p.get("project") or p.get("model_name") or "")).strip("_.")
+    stem = "".join(c if c.isascii() and c.isalnum() or c in "-_." else "_" for c in str(p.get("project") or p.get("model_name") or "")).strip("_.")
     return f"{stem or 'model'}_v{p.get('rev') or '1.0'}"
 
 
@@ -204,10 +211,8 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
                 if lay == layer:
                     out.append(f'<path data-label="{it.key}" d="' + " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(ring)) + ' Z"/>')
         out.append("</g>")
-    # Lines: the next layer's outline on a stacked slice (GUIDE, engraved) and fold lines (SCORE, scored, dashed by
-    # style) each on a layer of their own, since a laser maps its operations by layer. A layer with nothing on it is left out.
-    for layer in ("GUIDE", "SCORE"):
-        lines = [(style, pts) for it in items for style, pts in it.scores if (style == "guide") == (layer == "GUIDE")]
+    for layer in ("GUIDE", "SCORE"):                          # a layer with nothing on it is left out
+        lines = [(style, pts) for it in items for style, pts in it.scores if line_layer(style) == layer]
         if not lines:
             continue
         out.append(f'<g id="{layer}" fill="none" stroke="{COLORS[layer]}" stroke-width="0.15">')
@@ -251,8 +256,7 @@ def dxf_doc(items, labels, border=None, font=4.0, units="mm"):
         for layer, ring in it.rings:
             msp.add_lwpolyline(S(ring), close=True, dxfattribs={"layer": layer})
         for style, pts in it.scores:
-            # guide lines (next layer's outline, stacked) go on their own layer: engraved, not scored
-            msp.add_lwpolyline(S(pts), dxfattribs={"layer": "GUIDE" if style == "guide" else "SCORE", "linetype": DXF_LT.get(style, "BYLAYER")})
+            msp.add_lwpolyline(S(pts), dxfattribs={"layer": line_layer(style), "linetype": DXF_LT.get(style, "BYLAYER")})
         if labels:
             for mx, my, txt in it.marks:
                 msp.add_text(txt, height=font * 0.6 * f, dxfattribs={"layer": "LABEL"}).set_placement((mx * f, my * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
@@ -289,7 +293,7 @@ def pdf_doc(path, pages, labels, border, font):
             c.setStrokeColorRGB(*RGB[layer])
             for it in items:
                 for style, pts in it.scores:
-                    if (style == "guide") != (layer == "GUIDE"):
+                    if line_layer(style) != layer:
                         continue
                     c.setDash({"solid": [], "dashed": [3, 2], "dotted": [1, 2]}.get(style, []))
                     p = c.beginPath(); p.moveTo(pts[0][0] * PT, pts[0][1] * PT)
@@ -330,7 +334,7 @@ def eps_doc(items, w, h, labels, border, font):
         out.append("%s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB[layer]))
         for it in items:
             for style, pts in it.scores:
-                if (style == "guide") != (layer == "GUIDE"):
+                if line_layer(style) != layer:
                     continue
                 out.append(PS_DASH.get(style, PS_DASH["solid"]) + " " + path(pts, False))
     out.append("[] 0 setdash %s setrgbcolor" % " ".join(f"{v:.3f}" for v in RGB["LABEL"]))
@@ -405,7 +409,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             f = out_dir / f"{design} {stem}.{fmt}"
             if fmt == "svg": f.write_text(svg_doc(items, w, h, labels, border_, font, units, title), encoding="utf-8")
             elif fmt == "dxf": dxf_doc(items, labels, (w, h) if border_ else None, font, units).saveas(f)
-            elif fmt == "eps": f.write_text(eps_doc(items, w, h, labels, border_, font), encoding="latin-1")
+            elif fmt == "eps": f.write_text(eps_doc(items, w, h, labels, border_, font), encoding="latin-1", errors="replace")   # a label in another script: ? for its letters, not a failed export
             elif fmt == "pdf": pdf_doc(f, [(items, w, h)], labels, border_, font)
             written.append(f)
     if per_piece:                                   # identical pieces once, named "<part> <material> <thickness> x<qty>"
@@ -416,15 +420,15 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             it, w, h = item_for_piece(cpc, cnote); write(stem, [it], w, h, False)
             rows.append((f"{design} {stem}", 1, size_of(it), cnote))
         thick = {pc["label"]: sl["thickness"] for sl in plan["slices"] for pc in sl["pieces"]}
-        for pc, note, labels, flips in identical_groups(plan):
-            n = len(labels); t = thick[pc["label"]]
+        for pc, note, same, flips in identical_groups(plan):
+            n = len(same); t = thick[pc["label"]]
             # in puzzle mode the file is named after the code too: a folder of Z-1, Z-2 … gives the order away
             stem = names.get(pc["label"], pc["label"]) + mat_tag(plan) + thick_tag(plan, t) + f" x{n}"
             # the drawing carries the count and how many of them are turned over; the cut list names which ones
             it, w, h = item_for_piece(pc, " ".join(x for x in ([f"×{n}"] if n > 1 else []) + [f"({len(flips)} turned over)" if flips else "", note] if x), names=names,
                                       tag=plan.get("label_tag", ""), inside=inside, font=font)
             write(stem, [it], w, h, False)
-            also = "also " + ", ".join(names.get(l, l) for l in labels[1:]) if n > 1 else note
+            also = "also " + ", ".join(names.get(l, l) for l in same[1:]) if n > 1 else note
             rows.append((f"{design} {stem}", n, size_of(it), "; ".join(x for x in [also, "turn over " + ", ".join(names.get(l, l) for l in flips) if flips else ""] if x)))
         # one row per file: how many to cut, and each part's width × height as it lies in its file (what to check
         # against the stock, and the way to tell two parts apart that look alike)

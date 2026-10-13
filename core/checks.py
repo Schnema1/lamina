@@ -161,8 +161,8 @@ def check_insertion(slices, p):
 
 
 def check_plan(slices, p, mesh=None, span=None):
+    """Every check on freshly built slices; what the technique already said on a slice stays."""
     for sl in slices:
-        sl.errors, sl.warnings = [], []
         check_slice(sl, p)
     check_insertion(slices, p)
     check_assembly(slices, p)

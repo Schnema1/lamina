@@ -9,6 +9,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 
 
+def test_a_warning_a_technique_leaves_on_a_slice_reaches_the_plan():
+    """Stacked, aligned dowels, a dowel typed far outside the model: the technique says so on a slice while it builds,
+    and the checks that run after it keep the message (they used to wipe every slice's warnings first)."""
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off", "placement": "aligned", "dowels": [[500, 500]]})
+    assert any("outside the material" in w for sl in plan["slices"] for w in sl["warnings"]), [sl["warnings"] for sl in plan["slices"]]
+
+
 def test_no_crossing_slice_error_and_autofix_add_resolves_it():
     """curve mode with spines=0 gives every rib nothing to cross (no spine slices exist at all), so
     check_slice()'s `sl.group in ("X", "Y") and not sl.engages` branch fires on every rib."""

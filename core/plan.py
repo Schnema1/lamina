@@ -483,8 +483,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
                 continue
             sl.profile = prof
             kept.append(sl)
-        if p.get("next_outline") and hasattr(mode, "guide_outlines"):
-            mode.guide_outlines(ctx, [s for s in kept if s.group == "S"])   # on the finished outlines: grown, slivers shed
+        mode.guide_outlines(ctx, kept)                # on the finished outlines: grown, slivers shed
         dropped = [s for s in slices if s not in kept and s.label not in grazed]
         slices = kept
         progress("checking the parts and the assembly" + again, 0.7)
@@ -548,8 +547,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
     for pc in pieces:
         sheet_thick[pc.place[0]] = pc.parent.thickness
     sheet_out = sheet0
-    if p["one_sheet"]:                              # report the strip at the length the parts actually took
-        top = max((pc.placed.bounds[3] for pc in pieces), default=0.0) + p["sheet_margin"]
+    if p["one_sheet"]:                              # report the strip at the length the parts and their labels actually took
+        top = max([pc.placed.bounds[3] for pc in pieces] + [pc.label_pos[1] + p["font"] * 0.7 for pc in pieces if pc.label_pos], default=0.0) + p["sheet_margin"]
         sheet_out = [sheet0[0], float(np.ceil(top))]; p["sheet"] = sheet0
     progress("measuring coverage", 0.94)
     cov = coverage(mesh, slices, getattr(ctx, "cover_r", max(mesh.extents) / 8), lat=max(3.0, p["thickness"]))

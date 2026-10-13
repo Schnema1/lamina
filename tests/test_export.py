@@ -92,6 +92,68 @@ def test_guide_is_the_layer_as_cut_with_its_inner_edge(tmp_path):
     assert len(lengths) == 2 and lengths[0] < lengths[1] * 0.9          # both edges engraved: the inner ring is the shorter line
 
 
+def test_a_split_slice_keeps_its_guide_on_every_strip():
+    """A slice cut into strips for the sheet keeps the next layer's guide: each strip carries the part of the line that
+    lies on it, and together the strips carry the whole line — the cube's square, which runs along the strips' own
+    edges, the case rounding would lose."""
+    import math
+    import shapely
+    from shapely.geometry import LineString, Polygon
+    prm = {"distribution": "count", "count": 3, "autofix": "off", "connect": "none", "next_outline": True}
+    whole = build(EXAMPLES / "cube.stl", "stacked", prm)
+    strips = build(EXAMPLES / "cube.stl", "stacked", {**prm, "sheet": [120, 300], "split": True})
+    length = lambda pts: sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+    for sl in whole["slices"][:-1]:                                   # every layer but the top one carries a guide
+        cut = next(s for s in strips["slices"] if s["label"] == sl["label"])
+        assert len(cut["pieces"]) >= 2 and all(pc["kerfed_lines"] for pc in cut["pieces"]), [(pc["label"], pc["kerfed_lines"]) for pc in cut["pieces"]]
+        for pc in cut["pieces"]:
+            part = shapely.union_all([Polygon(r[0], r[1:]) for r in pc["kerfed"]]).buffer(1e-3)
+            assert all(part.covers(LineString(pts)) for _, pts in pc["kerfed_lines"]), pc["label"]   # on its own strip
+        assert abs(sum(length(pts) for pc in cut["pieces"] for _, pts in pc["kerfed_lines"])
+                   - sum(length(pts) for _, pts in sl["pieces"][0]["kerfed_lines"])) < 1              # and nothing lost
+
+
+def test_a_lone_part_file_puts_the_label_under_the_next_layer_like_the_sheet(tmp_path):
+    """A slab with a block on one end: the slab's widest spot is its middle, which the block does not cover, so the
+    label goes under the block's outline — on the sheet and, the same way, in the one-file-per-part export."""
+    import numpy as np
+    import shapely
+    from shapely.geometry import LineString, Point, Polygon
+    step = trimesh.creation.extrude_polygon(Polygon([(-50, -10), (50, -10), (50, 10), (-10, 10), (-10, 30), (-50, 30)]), 40)
+    step.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))   # the step rises along z
+    step.export(tmp_path / "step.stl")
+    plan = build(tmp_path / "step.stl", "stacked", {"distribution": "count", "count": 4, "autofix": "off", "connect": "none",
+                                                   "next_outline": True, "label_inside": True})
+    z2 = next(pc for sl in plan["slices"] for pc in sl["pieces"] if pc["label"] == "Z-2")   # the slab under the block
+    under = shapely.polygonize([LineString(pts) for _, pts in z2["lines"]])
+    assert 1300 < under.area < 1900 and under.covers(Point(z2["label_pos"][:2]))             # on the sheet: under the block
+    files = export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True)
+    tree = etree.parse(str(next(f for f in files if " Z-2 " in f.name)))
+    d = tree.xpath('//svg:g[@id="GUIDE"]/svg:path/@d', namespaces=SVG_NS)[0]
+    ring = Polygon([tuple(map(float, xy.split(","))) for xy in re.findall(r"[ML]([-\d.]+,[-\d.]+)", d)])
+    label = next(t for t in tree.xpath('//svg:g[@id="LABEL"]/svg:text', namespaces=SVG_NS) if "Z-2" in t.text)
+    assert ring.covers(Point(float(label.get("x")), float(label.get("y"))))                  # in its file: the same spot
+
+
+def test_a_plain_per_piece_export_engraves_no_label(tmp_path):
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off"})
+    files = export(plan, tmp_path, fmts=("svg",), labels=False, per_piece=True)
+    assert len(files) > 2
+    for f in files:
+        if f.suffix == ".svg":
+            assert not etree.parse(str(f)).xpath('//svg:text', namespaces=SVG_NS), f.name
+
+
+def test_a_name_in_another_script_still_exports_and_downloads(tmp_path):
+    """A model or project named with an umlaut or in Chinese: the EPS, a Latin-1 file, is still written, and the file
+    names stay ASCII, since the zip's name travels in an HTTP header that carries nothing else."""
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off"})
+    plan["label_tag"] = "Büste 龙"; plan["params"]["project"] = "Büste 龙"
+    files = export(plan, tmp_path, fmts=("eps", "svg"), labels=True, per_piece=True)
+    assert design_name(plan).isascii() and design_name(plan).encode("latin-1")
+    assert sum(f.suffix == ".eps" for f in files) == sum(f.suffix == ".svg" for f in files) > 0
+
+
 def test_svg_score_and_label_counts_folded(tmp_path):
     plan = build(EXAMPLES / "cube.stl", "folded", {"facet": 0, "joint": "laced", "autofix": "off"})
     export(plan, tmp_path, fmts=("svg",), labels=True)

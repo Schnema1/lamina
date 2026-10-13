@@ -187,6 +187,11 @@ class Mode:
         sets, or None to add crossing_fix's slice through each loose region instead."""
         return None
 
+    def guide_outlines(self, ctx, slices):
+        """Optional: lines the technique engraves once the outlines are final — grown, slivers shed, slots and holes
+        taken out of `profile` — such as stacked's next-layer guide. `slices` are the kept ones, in order."""
+        return None
+
     @classmethod
     def all_params(cls) -> list[Param]:
         return COMMON + cls.params

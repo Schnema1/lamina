@@ -19,10 +19,10 @@ import numpy as np
 import shapely
 from shapely import affinity
 from scipy.ndimage import binary_erosion, distance_transform_edt
-from shapely.geometry import LineString, Point, Polygon, box
+from shapely.geometry import LineString, Point, box
 from shapely.ops import split
 from shapely.strtree import STRtree
-from .geometry import as_multi, label_box, label_spot
+from .geometry import as_multi, inside_spot, label_box
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -346,8 +346,8 @@ def place_labels(sh, font, tag="", inside=False):
     the one thing that never happens is a part coming out with no label at all."""
     text = lambda pc: f"{tag} {pc.label}" if tag else pc.label        # `tag`: the model name engraved first
     if inside:
-        for pc in sh.pieces:
-            pc.label_pos = inside_spot(pc, *label_box(text(pc), font))   # engraved on the part: no leader line to it
+        for pc in sh.pieces:                                        # engraved on the part: no leader line to it
+            pc.label_pos = inside_spot(pc.placed, [ln for s, ln in pc.placed_lines if s == "guide"], *label_box(text(pc), font))
             pc.leader = None
         return
     tree = STRtree(sh.placed)
@@ -377,26 +377,3 @@ def place_labels(sh, font, tag="", inside=False):
         q = near.interpolate(near.project(anchor))
         pc.label_pos = (lx, ly, rot)
         pc.leader = ((lx, ly), (q.x, q.y))
-
-
-def inside_spot(pc, w, h):
-    """Where to engrave a w × h label on a placed part: inside the next layer's outline when the piece carries one
-    (the stacked guide), so the layer glued on top hides it, otherwise on the part's own widest spot. The next layer's
-    footprint is rebuilt from the piece's guide lines — the ring they enclose — and only used if the label fits inside
-    it. A label that fits nowhere is still given the part's widest clearance rather than left off, so the maker trims
-    it in the laser software instead of finding a part they cannot place."""
-    region = as_multi(pc.placed)
-    if region.is_empty:
-        return (0.0, 0.0, 0)
-    cover = None
-    guides = [ln for s, ln in pc.placed_lines if s == "guide"]
-    if guides:
-        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
-        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
-        # not covered, so a label there would show through
-        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
-        if loops:
-            under = shapely.union_all(loops).intersection(region)
-            if not under.is_empty:
-                cover = under
-    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part
