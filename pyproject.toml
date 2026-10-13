@@ -4,7 +4,7 @@ version = "0.2.5"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 description = "Lamina: free Slicer for Fusion 360 alternative. Turns 3D models into flat cut parts (stacked, interlocked, radial, ribbed, folded panels) for laser, CNC, plasma and vinyl cutters"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"   # the ceiling: a Python the compiled libraries (manifold3d …) have builds for; raise it when they ship 3.15 wheels (027)
 # PyPI search and libraries.io match on these; they name what people type, including the tools Lamina replaces.
 # No License :: classifier: the `license` expression above replaces it (PEP 639).
 keywords = ["laser cutting", "cnc", "plasma cutting", "slicer for fusion 360", "123d make", "papercraft", "pepakura",

@@ -36,6 +36,9 @@ panel's fold lines, and there is a Discord.
 
 ### Fixed
 
+- **Installing Lamina on a fresh computer works again.** A brand-new Python came out this week that some of
+  Lamina's libraries have no builds for yet, and the installer picked it, so the start script stopped with a
+  compiler error. Lamina now asks for a Python its libraries support. A copy already installed was never affected.
 - **One file per part keeps the lines.** The one-file-per-part export left every fold line off a folded panel, and
   would have left off the new guide line; both are in those files now, exactly as on the sheet.
 
