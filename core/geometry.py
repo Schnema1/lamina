@@ -144,11 +144,18 @@ def label_box(text, font):
     return max(6.0, width(text, font) + 2), font * 1.4
 
 
-def mark_box(x, y, text, font):
-    """The room a small engraved mark (a seam or dowel number, at 0.6 of the font) takes, centred on (x, y)."""
+def mark_box(x, y, text, font, rot=0.0):
+    """The room a small engraved mark (a seam or dowel number, at 0.6 of the font) takes, centred on (x, y) and turned
+    `rot` degrees — the mark's own turn in its part's frame; a mark on a nested part is turned by the placement too."""
     from .font import width
     s = font * 0.6
-    return box(x - (width(text, s) + 0.6) / 2, y - s * 0.7, x + (width(text, s) + 0.6) / 2, y + s * 0.7)
+    b = box(x - (width(text, s) + 0.6) / 2, y - s * 0.7, x + (width(text, s) + 0.6) / 2, y + s * 0.7)
+    return shapely.affinity.rotate(b, rot, origin=(x, y)) if rot else b
+
+
+def mark_rot(m):
+    """A mark's own turn, 0 for the three-value marks."""
+    return float(m[3]) if len(m) > 3 else 0.0
 
 
 def label_rect(x, y, rot, w, h):
@@ -193,16 +200,17 @@ def covered(region, guides):
     return None if under.is_empty else under
 
 
-def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90)):
-    """Where a w × h label fits whole on a part's material: inside the next layer's outline when the part carries one
-    (`guides`), so the layer glued on top hides it, else anywhere on the part — clear of its holes and of the marks
-    (boxes) already engraved on it — at the first of `angles` that holds it. None when it fits nowhere."""
+def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
+    """Where a w × h label fits whole on a part's material with `room` to spare all round: inside the next layer's
+    outline when the part carries one (`guides`), so the layer glued on top hides it, else anywhere on the part —
+    clear of its holes and of the marks and arrows (boxes) already engraved on it — at the first of `angles` that
+    holds it. None when it fits nowhere: a label crammed against the edge of a small part is better off beside it."""
     region = as_multi(region)
     if marks:
         region = as_multi(region.difference(unary_union([m.buffer(0.5) for m in marks])))
     for cand in (covered(region, guides), region):
         if cand is not None and not cand.is_empty:
-            spot = fit_block(cand, w, h, angles)
+            spot = fit_block(cand, w + 2 * room, h + 2 * room, angles)
             if spot:
                 return spot
     return None
@@ -218,12 +226,14 @@ def widest_spot(region):
     return (float(best.coords[0][0]), float(best.coords[0][1]), 0.0)
 
 
-def orient_arrows(region, longest=8.0):
+def orient_arrows(region, longest=8.0, keep=()):
     """Two arrows at a part's widest spot, on the LABEL layer: one up its frame's y, one shorter to the right along
     x, so every part of a model carries the same two directions and the engraved face is known to be the front. As
-    (style, LineString) lines, shaft and head each, sized to the clearance there; none on a part too small to hold
-    a legible pair."""
+    (style, LineString) lines, shaft and head each, sized to the clearance there, clear of `keep` (the marks already
+    engraved, as boxes); none on a part too small to hold a legible pair."""
     region = as_multi(region)
+    if keep:
+        region = as_multi(region.difference(unary_union([k.buffer(0.6) for k in keep])))
     if region.is_empty:
         return []
     disc = max((shapely.maximum_inscribed_circle(g, 0.5) for g in region.geoms), key=lambda c: c.length)

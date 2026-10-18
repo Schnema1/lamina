@@ -4,6 +4,24 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ## Unreleased
 
+### Fixed
+
+- **What goes on a part, and in what order.** The orientation arrows, the dowel and seam numbers and the label used
+  to be placed without regard for each other. Now the numbers go first, the arrows take the widest spot they leave,
+  and the label goes on the part only where it fits with room to spare — otherwise beside it, searched outward over
+  the whole sheet, and as a last resort with its line running across whatever lies between. A label is never put
+  where it overruns its part again. The rectangle packing is tried beside the polygon nest and kept when it needs
+  fewer sheets.
+- **Folded nets you can build.** Seam numbers were dropped at every seam's middle with no check, hundreds of them
+  over each other and across the fold lines of a scanned model's net. Each now reads along its own edge, on the tab
+  where the seam has one (as Pepakura prints them) or just inside the edge, only where the panel has room, and the
+  panel's warnings count the ones left off. A tab that would land on its own panel is put on the other side of the
+  seam instead of being dropped, which gave the cow example 49 more tabs. The hinge of a tab is scored across its
+  base only, where it used to run the whole seam under the cut line. The legend explains folds, cuts and how to read
+  the numbers.
+- **The assembly video names each part.** While the steps slider is short of the end, the 3D view carries the step
+  number and the name of the part going in at the top centre, drawn into the canvas, so the recorded video shows it.
+
 ### Added
 
 - **Non-uniform spacing, drawn as a curve.** Stacked, interlocked, radial and curve each have a *vary the spacing*

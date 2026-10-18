@@ -9,7 +9,7 @@ from shapely.ops import unary_union
 from . import Mode, Param, register, spacing_params
 from ..model import ABC
 from ..model import Slice
-from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, mark_box, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
+from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, mark_box, mark_rot, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
 
 _dist = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])   # noqa: E731
 
@@ -32,7 +32,7 @@ def hole_mark(sl, hole, text, font):
     reach = max(math.hypot(x - cx, y - cy) for x, y in hole.exterior.coords)
     room = sl.raw.buffer(-0.3)
     cuts = [c.buffer(0.3) for c in sl.cuts]
-    taken = [mark_box(mx, my, t, font) for mx, my, t in sl.marks]
+    taken = [mark_box(*m[:3], font, mark_rot(m)) for m in sl.marks]
     for ang in (90, 270, 0, 180, 45, 135, 225, 315):
         dx, dy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
         far = reach + 0.6 + abs(dx) * w / 2 + abs(dy) * h / 2         # the box's edge nearest the hole 0.6 mm from it
@@ -385,7 +385,7 @@ class Stacked(Mode):
             if key not in sl.cutkeys:
                 sl.cutkeys[key] = geom; sl.cutnames[key] = name; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
                 # a hole that lands on a mark engraved before it wins: the mark moves (a hole holds the model, a mark only names it)
-                for m in [m for m in sl.marks if mark_box(*m, p["font"]).distance(geom) < 0.3]:
+                for m in [m for m in sl.marks if mark_box(*m[:3], p["font"], mark_rot(m)).distance(geom) < 0.3]:
                     sl.marks.remove(m)
                     hole_mark(sl, next(c for k2, c in sl.cutkeys.items() if sl.cutnames[k2].split("-", 1)[1] == m[2]), m[2], p["font"])
                 hole_mark(sl, geom, name.split("-", 1)[1], p["font"])      # Z-3a is marked 3a: every slice of a stack shares the axis

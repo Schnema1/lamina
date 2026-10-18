@@ -241,7 +241,6 @@ def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mo
     the holes and the marks there; otherwise it goes beside the part, inside the sheet margin, touching no part and no
     other label, with a leader line that crosses no other part. Nothing here was short of room (no crowded note)."""
     import shapely
-    from shapely import affinity
     from shapely.geometry import LineString
     from core.geometry import label_box, label_rect, mark_box
     plan = build(EXAMPLES / f"{model}.stl", mode, {**params, "autofix": "off"})
@@ -258,7 +257,7 @@ def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mo
             lab, r = pc["label"], rects[pc["label"]]
             if pc["leader"] is None:                                            # on the part: whole, and off its marks
                 assert parts[lab].buffer(0.01).covers(r), lab
-                assert all(r.disjoint(affinity.rotate(mark_box(x, y, t, font), pc["place"][3], origin=(x, y))) for x, y, t in pc["marks"]), lab
+                assert all(r.disjoint(mark_box(x, y, t, font, rot + pc["place"][3])) for x, y, t, rot in pc["marks"]), lab
                 continue
             x0, y0, x1, y1 = r.bounds
             assert x0 >= m - 1e-6 and y0 >= m - 1e-6 and x1 <= W - m + 1e-6 and y1 <= H - m + 1e-6, (lab, r.bounds)

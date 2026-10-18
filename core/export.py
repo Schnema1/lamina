@@ -144,7 +144,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", font=4.0):
     x0, y0 = min(xs) - pad, min(ys) - pad
     it.rings = [(l, [(x - x0, y - y0) for x, y in r]) for l, r in it.rings]
     it.scores = [(s, [(x - x0, y - y0) for x, y in pts]) for s, pts in pc.get("kerfed_lines") or []]   # in the part's own frame, like `kerfed`
-    it.marks = [(x - x0, y - y0, t) for x, y, t in pc.get("kerfed_marks") or []]
+    it.marks = [(m[0] - x0, m[1] - y0, m[2], m[3] if len(m) > 3 else 0.0) for m in pc.get("kerfed_marks") or []]
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
     it.leader = None
     on = label_on_part(pc)
@@ -157,7 +157,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", font=4.0):
     if dx or dy:
         it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
         it.scores = [(s, [(qx - dx, qy - dy) for qx, qy in pts]) for s, pts in it.scores]
-        it.marks = [(mx - dx, my - dy, t) for mx, my, t in it.marks]
+        it.marks = [(m[0] - dx, m[1] - dy, *m[2:]) for m in it.marks]
         x -= dx; y -= dy; w -= dx; h -= dy; bx1 -= dx; by1 -= dy
     it.label_pos = (x, y, rot)
     return it, max(w, bx1 + 1), max(h, by1 + 1)         # grow the sheet of paper so nothing is clipped
@@ -190,8 +190,8 @@ def texts(items, font):
     from it to its part. The strokes are the single-stroke font's polylines, centred on the text's spot, in sheet mm — the same
     lines in every format, so what the laser engraves never depends on a font the machine's software has."""
     for it in items:
-        for x, y, t in it.marks:
-            yield str(t), glyphs(str(t), font * 0.6, x, y, it.rot), None
+        for m in it.marks:
+            yield str(m[2]), glyphs(str(m[2]), font * 0.6, m[0], m[1], it.rot + (m[3] if len(m) > 3 else 0.0)), None
         if it.label_pos:
             x, y, rot = it.label_pos
             yield it.label, glyphs(it.label, it.size or font, x, y, rot), it.leader

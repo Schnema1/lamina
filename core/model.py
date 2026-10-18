@@ -60,7 +60,7 @@ class Slice:
     raw: MultiPolygon | None = None     # section ∩ clip, before cuts. Modes may set it directly (synthetic parts)
     profile: MultiPolygon | None = None # raw − cuts (what gets cut out), before kerf
     lines: list = field(default_factory=list)     # [(style, LineString)] score / fold lines (local): "mountain" | "valley"
-    marks: list = field(default_factory=list)     # [(x, y, text)] small engraved marks (local), e.g. seam numbers
+    marks: list = field(default_factory=list)     # [(x, y, text) or (x, y, text, rot)] small engraved marks (local): seam and dowel numbers, rot = turned to read along an edge
     facets: list | None = None          # [(M, MultiPolygon)] for the 3D view when the part is not one flat slice (folded panels)
     pieces: list = field(default_factory=list)    # Piece objects when split
     warnings: list = field(default_factory=list)
@@ -78,6 +78,8 @@ class Slice:
     pn: object = None                   # folded: the Panel this slice is cut from
     additions: list = field(default_factory=list)   # folded: tabs added to the panel's outline
     skipped: dict = field(default_factory=dict)     # folded: what → seams whose joint found no room
+    room: MultiPolygon | None = None    # folded: the panel with its tabs so far, a hair in, where a seam number may go (cached)
+    room_tabs: int = -1                 # … and how many tabs it had when that was last worked out
     reduced: int = 0                    # folded: joints made smaller than asked
     tab_facets: list = field(default_factory=list)  # folded: the tabs as the 3D view shows them, folded onto their panel
 

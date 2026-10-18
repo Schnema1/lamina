@@ -989,7 +989,21 @@ function fitView(){const b=new THREE.Box3().setFromObject(parts.children.length?
   // close enough to read a slot, never onto the point it turns about (from 0 no zoom ever comes back), never so far the
   // model is lost; the clipping planes outside both, so nothing is cut away at either end
   controls.minDistance=s/40;controls.maxDistance=s*8;camera.near=s/200;camera.far=s*20;camera.updateProjectionMatrix()}
+// The name of the part going in, at the top centre of the 3D view while the steps slider is short of the end: drawn
+// into the canvas itself (a sprite riding with the camera), so the recorded video carries it — the video is the
+// canvas, and an HTML caption over it would never reach the file.
+const banner=new THREE.Sprite(new THREE.SpriteMaterial({map:null,depthTest:false,transparent:true})); banner.visible=false; banner.renderOrder=9; camera.add(banner); scene.add(camera);
+function showBanner(text){
+  if(!text){banner.visible=false;return}
+  const c=document.createElement('canvas');c.width=1024;c.height=96;const g=c.getContext('2d');
+  g.fillStyle='rgba(20,21,23,.72)';g.beginPath();g.roundRect(8,8,1008,80,14);g.fill();
+  g.fillStyle='#e6e6e3';g.font='bold 44px system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(text,512,50);
+  if(banner.material.map)banner.material.map.dispose(); const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;banner.material.map=t;banner.material.needsUpdate=true;
+  const dist=60,half=dist*Math.tan(camera.fov*Math.PI/360),w=half*2*camera.aspect;   // the view at `dist` in front of the camera
+  banner.position.set(0,half*0.72,-dist); banner.scale.set(Math.min(w*0.9,half*2.4),Math.min(w*0.9,half*2.4)*96/1024,1); banner.visible=true;
+}
 function applyExplode(){const e=+$('#explode').value,st=$('#steps'),k=+st.value;for(const m of parts.children){if(m.userData.group==='B')continue;m.position.copy(m.userData.origin).multiplyScalar(e-1);m.visible=m.userData.i<k}
+  const going=k<+st.max&&parts.children.find(m=>m.userData.i===k-1); showBanner(going?`step ${k} / ${+st.max}  ·  ${(plan&&plan.label_tag?plan.label_tag+' ':'')}${going.userData.piece}`:'');
   $('#steps_val').textContent=`${k} / ${+st.max||0}`;   // the step counter, live while the slider is dragged
   const s=selected&&parts.children.find(c=>c.userData.slice===selected); if(s)drawGizmo(s);   // the handles ride with the part
   dirty=true}
