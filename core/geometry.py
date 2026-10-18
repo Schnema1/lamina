@@ -218,6 +218,28 @@ def widest_spot(region):
     return (float(best.coords[0][0]), float(best.coords[0][1]), 0.0)
 
 
+def orient_arrows(region, longest=8.0):
+    """Two arrows at a part's widest spot, on the LABEL layer: one up its frame's y, one shorter to the right along
+    x, so every part of a model carries the same two directions and the engraved face is known to be the front. As
+    (style, LineString) lines, shaft and head each, sized to the clearance there; none on a part too small to hold
+    a legible pair."""
+    region = as_multi(region)
+    if region.is_empty:
+        return []
+    disc = max((shapely.maximum_inscribed_circle(g, 0.5) for g in region.geoms), key=lambda c: c.length)
+    (cx, cy), r = disc.coords[0], disc.length
+    L = min(longest, r - 0.6)
+    if L < 2.5:
+        return []
+    out = []
+    for dx, dy, length in ((0, 1, L), (1, 0, 0.65 * L)):
+        tx, ty = cx + dx * length, cy + dy * length                      # the tip
+        h = 0.3 * length; px, py = -dy, dx                                  # the head's half-width, across the shaft
+        out.append(("orient", LineString([(cx, cy), (tx, ty)])))
+        out.append(("orient", LineString([(tx - dx * h - px * h * 0.6, ty - dy * h - py * h * 0.6), (tx, ty), (tx - dx * h + px * h * 0.6, ty - dy * h + py * h * 0.6)])))
+    return out
+
+
 def label_angles(region):
     """The turns to try a label on a part at: upright, a quarter turn, and along the part's long side and across it
     when that side is not already square to the sheet."""

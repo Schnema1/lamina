@@ -16,6 +16,11 @@ What changed in each release. The GitHub release for a version is this section, 
   seam numbers of folded panels — now turn with their part on the sheet, so a mark placed beside a hole stays beside
   it however the part was nested, and a hole is never cut through a mark engraved before it.
 
+- **Orientation arrows.** A new sheet option (`orient_mark`) engraves two small arrows at the middle of every part,
+  with the labels: a long one up the part's frame and a short one to its right, the same two directions on every
+  part of the model, so a part turned on the sheet or laid face down is seen at once — the engraved face is the front.
+  Labels keep clear of them, and the assembly key says what they mean.
+
 ### Changed
 
 - **Labels on the parts where they fit, in free space where they do not.** A label used to go beside its part at
@@ -27,8 +32,10 @@ What changed in each release. The GitHub release for a version is this section, 
   crosses no other part and starts at the label's edge rather than through its letters. `labels on the parts`
   (`label_inside`) became `labels go` (`label_place`): *part*, the new default, *beside* for nothing engraved on the
   parts, *on* for always on the part; a project saved with the tickbox keeps what it had. A part with no free spot
-  anywhere is counted in the notes. The sheet title is engraved inside the top margin at a size that fits it, where
-  it used to run into the parts, and the one-file-per-part export engraves the label exactly where the sheet does.
+  anywhere is tried smaller first — four fifths, two thirds, half the font — on the part and beside it, before it is
+  put on the part anyway and counted in the notes. The sheet title is engraved inside the top margin at a size that
+  fits it, where it used to run into the parts, and the one-file-per-part export engraves the label exactly where
+  the sheet does.
 
 - **Labels in a single-stroke font.** Every engraved text in the cut files — part labels, seam numbers, the sheet
   title — is now drawn in a stroke font (Hershey Simplex): each letter is a few open lines the laser engraves in one

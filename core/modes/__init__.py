@@ -95,6 +95,9 @@ COMMON: list[Param] = [
       "code = a short code that gives nothing away, for a puzzle: the app, the Parts list and the 3D view still show the real "
       "labels, and assembly-key.txt in the export maps code → part. Leave that file out of the zip and the puzzle stays a puzzle",
       choices=["position", "code"], group="sheet", show_if=("labels", True)),
+    P("orient_mark", "bool", False, "Engrave two small arrows at the middle of every part (LABEL layer, with the labels): a long one up the "
+      "part's frame and a short one to its right, the same two directions on every part of the model, so a part turned on the sheet "
+      "or laid face down is seen at once — the engraved face is the front. Labels keep clear of them", group="sheet", label="orientation arrows"),
     P("label_place", "choice", "part", "Where each label is engraved. part = on the part itself where the whole label fits on "
       "its material (inside the outline of the next layer where the technique marks one, so the layer glued on top hides it), "
       "beside it with a line pointing at it where it does not · beside = always beside the part, on the waste, so nothing is "

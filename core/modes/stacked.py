@@ -368,12 +368,15 @@ class Stacked(Mode):
                 return not tab
             if sl.inner is None:
                 sl.inner = sl.raw.buffer(-mf)
-            return (sl.inner.contains(g) and all(g.distance(c) >= mf for c in sl.cutkeys.values())
-                    and all(g.distance(mark_box(x, y, t, p["font"])) >= 0.3 for x, y, t in sl.marks))   # nor through a mark already engraved
+            return sl.inner.contains(g) and all(g.distance(c) >= mf for c in sl.cutkeys.values())
 
         def add_cut(sl, geom, key, other, pt, name):   # a slice touches two pairs: the same aligned point is cut once
             if key not in sl.cutkeys:
                 sl.cutkeys[key] = geom; sl.cutnames[key] = name; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
+                # a hole that lands on a mark engraved before it wins: the mark moves (a hole holds the model, a mark only names it)
+                for m in [m for m in sl.marks if mark_box(*m, p["font"]).distance(geom) < 0.3]:
+                    sl.marks.remove(m)
+                    hole_mark(sl, next(c for k2, c in sl.cutkeys.items() if sl.cutnames[k2].split("-", 1)[1] == m[2]), m[2], p["font"])
                 hole_mark(sl, geom, name.split("-", 1)[1], p["font"])      # Z-3a is marked 3a: every slice of a stack shares the axis
             sl.links.append((other, geom, pt))
 

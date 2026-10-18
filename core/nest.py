@@ -326,37 +326,39 @@ def _poly_nest(prepared, sheet, gap, margin):
 def place_labels(sh, font, tag="", place="part"):
     """Every part's label. `place` = "part": on the part itself where the whole label fits on its material — inside
     the next layer's outline where the piece carries one (the stacked "engrave next layer" guide), so the layer glued
-    on top hides it, upright or turned along the part — else beside the part in free space, with a leader line to its
-    outline; "beside": always beside; "on": always on the part, on its widest spot and past its outline if it must,
-    for the maker to trim in the laser software. Free space is space inside the sheet margin that no part (at the
-    nesting gap), no earlier label and no leader line crosses, searched outward from the part's outline, above it
-    first. A part with none within reach keeps its label on its widest spot and is counted (`crowded`) so the plan
-    can say so — the one thing that never happens is a part coming out with no label at all."""
+    on top hides it, upright or turned along the part, clear of its marks and arrows — else beside the part in free
+    space, with a leader line to its outline; "beside": always beside; "on": always on the part. Free space is space
+    inside the sheet margin that no part (at the nesting gap), no earlier label and no leader line crosses, searched
+    outward from the part's outline, above it first. A label with no room at the job's font is tried smaller, down to
+    half, before it is put on the part's widest spot anyway, past its outline if it must, for the maker to trim in the
+    laser software — counted (`crowded`) so the plan can say so. The one thing that never happens is a part coming
+    out with no label at all."""
     text = lambda pc: f"{tag} {pc.label}" if tag else pc.label        # `tag`: the model name engraved first
     for g in sh.placed:
         shapely.prepare(g)
     tree = STRtree(sh.placed)
     taken = []
     for k, pc in enumerate(sh.pieces):
-        w, h = label_box(text(pc), font)
-        spot = None
-        if place != "beside":
-            spot = fit_on_part(pc.placed, [ln for s, ln in pc.placed_lines if s == "guide"], w, h,
-                               [affinity.rotate(mark_box(x, y, t, font), pc.place[3], origin=(x, y)) for x, y, t in pc.placed_marks], label_angles(pc.placed))
-        if spot is None and place == "on":
-            spot = widest_spot(pc.placed)
-        if spot is None:
-            found = _beside(k, pc, w, h, sh, tree, taken)
+        keep = ([mark_box(x, y, t, font) for x, y, t in pc.placed_marks] if pc.placed_marks else []) \
+            + [ln.buffer(0.8) for s, ln in pc.placed_lines if s == "orient"]
+        keep = [affinity.rotate(b, pc.place[3], origin=(x, y)) for b, (x, y, _) in zip(keep, pc.placed_marks)] + keep[len(pc.placed_marks):]
+        guides = [ln for s, ln in pc.placed_lines if s == "guide"]
+        angles = label_angles(pc.placed) if place != "beside" else ()
+        pc.crowded = False
+        for scale in (1.0, 0.8, 0.65, 0.5):
+            size = font * scale
+            w, h = label_box(text(pc), size)
+            spot = fit_on_part(pc.placed, guides, w, h, keep, angles) if place != "beside" else None
+            if spot:
+                pc.label_pos, pc.leader, pc.label_size = spot, None, size
+                taken.append(label_rect(*spot, w, h)); break
+            found = _beside(k, pc, w, h, sh, tree, taken) if place != "on" else None
             if found:
                 pc.label_pos, pc.leader, rect = found
-                pc.crowded = False; taken.append(rect)
-                continue
-            spot = widest_spot(pc.placed)
-            pc.crowded = True
+                pc.label_size = size; taken.append(rect); break
         else:
-            pc.crowded = False
-        pc.label_pos, pc.leader = spot, None
-        taken.append(label_rect(*spot, w, h))
+            pc.label_pos, pc.leader, pc.label_size, pc.crowded = widest_spot(pc.placed), None, size, place != "on"
+            taken.append(label_rect(*pc.label_pos, *label_box(text(pc), size)))
 
 
 def _beside(k, pc, w, h, sh, tree, taken):

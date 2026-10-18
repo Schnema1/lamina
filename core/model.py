@@ -87,6 +87,7 @@ class Piece:
     placed_lines: list = field(default_factory=list)
     placed_marks: list = field(default_factory=list)
     label_pos: tuple | None = None          # (x, y, rotation) of the label text on the sheet
+    label_size: float | None = None         # the label's capital height: the job's font, or smaller where that was all that fit
     leader: tuple | None = None             # ((x0, y0), (x1, y1)) label → part
     crowded: bool = False                   # the label sits on the part only because no free spot beside it was found
     same: list = field(default_factory=list)     # labels of the pieces cut from this same outline (mark_identical)

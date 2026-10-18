@@ -11,7 +11,7 @@ from shapely import affinity
 from shapely.geometry import MultiPolygon, MultiLineString, MultiPoint
 from shapely.ops import unary_union
 from .modes import load_all, Ctx
-from .geometry import section_polygons, as_multi, poly_coords, line_coords, min_dims, min_rect_angle
+from .geometry import section_polygons, as_multi, poly_coords, line_coords, min_dims, min_rect_angle, orient_arrows
 from .checks import STRUCTURAL, check_plan, suggest_fixes, crossing_suggestions
 from .split import split_slice, fits_rotated, islands
 from .nest import nest
@@ -572,6 +572,9 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
             sl.pieces = islands(sl) if sl.facets is None else [Piece(sl.label, sl.profile, sl, sl.lines, sl.marks)]   # a folded net stays whole
     n_err += _oversize(slices, p, sheet0, mesh, ctx)
     pieces = [pc for sl in slices for pc in sl.pieces]
+    if p["orient_mark"]:                               # the same two directions on every part: which way is up, which face is the front
+        for pc in pieces:
+            pc.lines = pc.lines + orient_arrows(pc.geom)
     kerf = p["kerf"] if p["compensate"] else 0.0       # off by default: many machines compensate their own kerf
     tag = label_tag(p, model_path)                     # the model's name, engraved before every label: nested with room for it
     n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["labels"], p["font"], tag, p["label_place"])
@@ -703,7 +706,7 @@ def _slice_json(sl):
                     "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
                     "marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.placed_marks],
                     "kerfed_marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.marks],
-                    "label_pos": pc.label_pos, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
+                    "label_pos": pc.label_pos, "label_size": pc.label_size, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
                     "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight
                     } for pc in sl.pieces],
     }

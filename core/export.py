@@ -38,6 +38,7 @@ class Item:
             self.rings.append(("OUTER", region[0]))
             self.rings += [("INNER", r) for r in region[1:]]
         self.key = pc["label"]
+        self.size = pc.get("label_size")         # the label's capital height, when the sheet had to shrink it (else the font)
         # `tag` is the model's name (plan["label_tag"]), engraved first so parts of two models never get mixed up
         self.label = (f"{tag} " if tag else "") + (names or {}).get(pc["label"], pc["label"]) + (f" {note}" if note else "")
         self.label_pos = pc.get("label_pos")
@@ -82,7 +83,7 @@ def _free_spot(plan, w, h, step=10.0):
                 boxes.append((min(xs), min(ys), max(xs), max(ys)))
                 lp = pc.get("label_pos")
                 if lp:
-                    lw, lh = label_box(f"{plan.get('label_tag') or ''} {pc['label']}".strip(), font)
+                    lw, lh = label_box(f"{plan.get('label_tag') or ''} {pc['label']}".strip(), pc.get("label_size") or font)
                     boxes.append((lp[0] - lw / 2, lp[1] - lh / 2, lp[0] + lw / 2, lp[1] + lh / 2))
         B = np.array(boxes) if boxes else np.zeros((0, 4))
         for y in np.arange(H - m - h, m - 1e-9, -step):
@@ -151,7 +152,7 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", font=4.0):
         it.label_pos = (w / 2, h + 3, 0)                 # above the part, as the single-part files always did
         return it, w, h + 6
     x, y, rot = on[0] - x0, on[1] - y0, on[2]
-    bx0, by0, bx1, by1 = label_rect(x, y, rot, *label_box(it.label, font)).bounds
+    bx0, by0, bx1, by1 = label_rect(x, y, rot, *label_box(it.label, it.size or font)).bounds
     dx, dy = min(0.0, bx0 - 1), min(0.0, by0 - 1)      # a label overrunning left/bottom moves the whole drawing
     if dx or dy:
         it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
@@ -165,8 +166,8 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", font=4.0):
 # The dash of each line style as (SVG dasharray in mm, PDF / PostScript dash in points, DXF linetype — its pattern is
 # defined in dxf_doc). Each format keeps its own numbers: the laser and the printer read them at different scales.
 DASH = {"solid": ((), [], "BYLAYER"), "dashed": ((1.5, 1), [3, 2], "DASHED"), "dotted": ((0.4, 0.8), [1, 2], "DOT")}
-LINE_LAYER = {"guide": "GUIDE"}      # a line's layer by its style: the next layer's outline is engraved (GUIDE), every
-                                     # fold line scored (SCORE), since a laser maps its operations by layer
+LINE_LAYER = {"guide": "GUIDE", "orient": "LABEL"}   # a line's layer by its style: the next layer's outline is engraved (GUIDE),
+                                     # the orientation arrows go with the labels, every fold line is scored (SCORE)
 
 
 def line_layer(style):
@@ -193,7 +194,7 @@ def texts(items, font):
             yield str(t), glyphs(str(t), font * 0.6, x, y, it.rot), None
         if it.label_pos:
             x, y, rot = it.label_pos
-            yield it.label, glyphs(it.label, font, x, y, rot), it.leader
+            yield it.label, glyphs(it.label, it.size or font, x, y, rot), it.leader
 
 
 # ------------------------------------------------------------------ SVG
@@ -250,6 +251,7 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
         on = [s for s in lines if s[0] == layer]
         if not on and layer in ("GUIDE", "SCORE"):            # a line layer with nothing on it is left out
             continue
+        # (the LABEL layer's lines — the orientation arrows — are drawn with the labels below)
         out.append(f'<g id="{layer}" fill="none" stroke="{COLORS[layer]}" stroke-width="0.15">')
         for _, pts, closed, style, key in on:
             d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts)) + (" Z" if closed else "")
@@ -269,6 +271,8 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
         if title and size >= 1.5:
             out.append(path(title, glyphs(title, size, size * 0.5, height - margin / 2, anchor="start")))
         if labels:
+            for _, pts, _, _, _ in (s for s in lines if s[0] == "LABEL"):
+                out.append('<path d="' + " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(pts)) + '"/>')
             for text, sts, leader in texts(items, font):
                 out.append(path(text, sts))
                 if leader:
@@ -290,6 +294,8 @@ def dxf_doc(items, labels, border=None, font=4.0, units="mm"):
     msp = doc.modelspace()
     S = lambda pts: [(x * f, y * f) for x, y in pts]
     for layer, pts, closed, style, _ in strokes(items):        # a cut ring takes its layer's linetype; a line names its own
+        if layer == "LABEL" and not labels:                       # the orientation arrows go with the labels
+            continue
         msp.add_lwpolyline(S(pts), close=closed, dxfattribs={"layer": layer} if closed else {"layer": layer, "linetype": DASH[style][2]})
     if labels:
         for _, sts, leader in texts(items, font):
@@ -331,7 +337,8 @@ def pdf_doc(path, pages, labels, border, font):
             c.rect(0, 0, w * PT, h * PT, stroke=1, fill=0)
         if labels:
             c.setLineCap(1); c.setLineJoin(1)                 # round: a stroke font's corners, like the laser draws them
-            for _, sts, leader in texts(items, font):
+            arrows = [[st[1]] for st in lines if st[0] == "LABEL"]
+            for _, sts, leader in [*((None, a, None) for a in arrows), *texts(items, font)]:
                 for st in sts:
                     p = c.beginPath(); p.moveTo(st[0][0] * PT, st[0][1] * PT)
                     for x, y in st[1:]: p.lineTo(x * PT, y * PT)
@@ -359,6 +366,7 @@ def eps_doc(items, w, h, labels, border, font):
         out.append(path([(0, 0), (w, 0), (w, h), (0, h)], True))
     if labels:
         out.append("1 setlinecap 1 setlinejoin")
+        out += [path(pts, False) for lay, pts, *_ in lines if lay == "LABEL"]
         for _, sts, leader in texts(items, font):
             out += [path(st, False) for st in sts]
             if leader:
@@ -386,6 +394,9 @@ def key_text(plan):
     out += ["  A part too big for the sheet is cut into pieces and the piece number comes last: Z-3-2 is the second piece of Z-3.",
             {"on": "  Each label is engraved on its own part.", "beside": "  Each label is engraved beside its own part on the sheet, with a line pointing at it."}
             .get(p.get("label_place"), "  Each label is engraved on its own part where it fits, else beside it on the sheet with a line pointing at it.")]
+    if p.get("orient_mark"):
+        out.append("  The two arrows at the middle of each part: the engraved face is the front, and the long arrow points the same way on "
+                   "every part (up the slice's own frame), the short one to its right — turn the parts until their arrows agree.")
     if codes:
         out += ["  Puzzle mode: what is engraved is the code in the first column below — it says nothing about where the part goes.",
                 "  This file is the only way back, so leave it out of the zip (the tickbox under Export) to keep the puzzle."]

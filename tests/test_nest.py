@@ -224,6 +224,8 @@ def test_labels_inside_sit_on_their_part_and_a_lone_part_file_grows_to_hold_one(
 
     x0, _, x1, _ = Polygon(pieces[0]["placed"][0][0]).bounds
     plan["params"]["font"] = 60.0                                     # "cube Z-1" at 60 mm: about 300 mm of label on a 180 mm slab
+    for pc in pieces:
+        pc["label_size"] = 60.0                                       # the size the sheet gave each label: the export engraves at it
     files = [f for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True) if " Z-1 " in f.name]
     width, height = map(float, re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', files[0].read_text(encoding="utf-8")).groups())
     assert max(width, height) > 1.5 * (x1 - x0), (width, height)    # the page outgrows the slab the way the label runs: it is all on it
@@ -250,7 +252,8 @@ def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mo
     for si in range(plan["sheets"]):
         on = [pc for pc in pieces if pc["place"][0] == si]
         parts = {pc["label"]: shapely.union_all([Polygon(r[0], r[1:]) for r in pc["placed"]]) for pc in on}
-        rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{tag} {pc['label']}".strip(), font)) for pc in on}
+        rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{tag} {pc['label']}".strip(), pc["label_size"])) for pc in on}
+        assert all(pc["label_size"] == font for pc in on), [(pc["label"], pc["label_size"]) for pc in on if pc["label_size"] != font]   # room for every one at full size
         for pc in on:
             lab, r = pc["label"], rects[pc["label"]]
             if pc["leader"] is None:                                            # on the part: whole, and off its marks
