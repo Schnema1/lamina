@@ -8,7 +8,7 @@ import math
 import numpy as np
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
-from . import Mode, Param, register, MAX_SLICES
+from . import Mode, Param, register, MAX_SLICES, spacing_params
 from ..model import Slice
 from ..geometry import rot_about, as_multi, circle, section_polygons
 from ..notch import cut_slots
@@ -53,6 +53,7 @@ class Radial(Mode):
                                     "the drag, so the spine survives it; turn the view until that plane is edge-on to move an axis off it. "
                                     "Every fan shares `count`, so neighbouring fans meet plane for plane", unit="mm"),
         Param("count", "int", 6, "Radial planes through each axis (gives 2 × count half-slices per axis)", 1, 90, 1),
+        *spacing_params("planes", [("spacing_curve", "plane spacing round the axis", [[0, 30], [0.5, 30], [1, 30]])], 5, 60, unit="deg"),
         Param("angle", "number", 0, "Turn the whole fan about the axis (deg): where the first radial plane starts. The pattern repeats every 180 / count degrees. "
                                     "Axes side by side on one plane start their fans on the spine instead, and this does nothing", -90, 90, 1, unit="deg"),
         Param("spine", "int", 0, "Full planes through every axis, cut whole and slotted into every ring: what holds one fan to the next. "
@@ -207,9 +208,12 @@ class Radial(Mode):
         kind, n_s, off, flat = self._layout(axes, t)
         n_sp = p["spine"] or (1 if several else 0)
         spines, ang0 = [], p["angle"]
+        drawn = ctx.spaced("spacing_curve", 180.0, n, periodic=True, unit="deg")   # the planes' angles round the axis, 0..180°
+        angles = drawn if drawn is not None else [180.0 * k / n for k in range(n)]
+        n = len(angles)
         if n_sp and kind == "line":                       # the whole pencil of planes through the line: n of them, on the fan's own angles
             O, u, _, e1 = axes[0]
-            spines = [np.cross(u, rot_about(u, ang0 + 180.0 * (round(j * n / n_sp) % n) / n) @ e1) for j in range(min(n_sp, n))]
+            spines = [np.cross(u, rot_about(u, ang0 + angles[round(j * n / n_sp) % n]) @ e1) for j in range(min(n_sp, n))]
         elif n_sp and kind == "plane":
             spines, ang0 = [n_s], 0.0
             if n_sp > 1:
@@ -233,7 +237,7 @@ class Radial(Mode):
             # the planes of this fan, minus the ones a spine already is: that sheet is cut whole instead of in halves
             fan = []
             for k in range(n):
-                radial = rot_about(u, ang0 + 180.0 * k / n) @ e1
+                radial = rot_about(u, ang0 + angles[k]) @ e1
                 nrm = np.cross(u, radial)
                 if not any(abs(nrm @ s) > COINCIDENT for s in spines):
                     fan.append((k, radial, nrm))

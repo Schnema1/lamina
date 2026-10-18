@@ -6,6 +6,18 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ### Added
 
+- **Non-uniform spacing, drawn as a curve.** Stacked, interlocked, radial and curve each have a *vary the spacing*
+  switch, and with it a graph under the 3D view: the distance between neighbouring slices against the position
+  along the way — for radial the angle between the fan's planes against the angle round the axis, periodic, so the
+  fan closes on itself; for interlocked one graph per family, each along its own axis. Drag the points (double-click
+  adds one, alt-click removes one) and the model re-slices: dense where the shape changes fast, sparse where it does
+  not. The curve between the points never overshoots them. *Keep* decides what is fixed: the count, with the drawn
+  spacings scaled to span the model (the graph says by how much), or the spacings as drawn, with the count following.
+  The ticks under the graph are where the slices went. Four new examples open with a curve: `vase` (stacked, dense
+  at the foot, shoulder and lip), `ripple` (interlocked, one family following a ripple that tightens), `berry`
+  (radial, the planes crowding the bumpy side) and `hook` (curve, ribs close round the bend). Slices a curve puts
+  closer than the material are an error, with the pair named.
+
 - **Dowels named after their slices, and marked beside their holes.** A connector is named after the lower of the
   two slices it joins and a letter: `Z-3a` is dowel *a* between `Z-3` and `Z-4`, and `3a` is engraved beside its
   hole on both slices. Read a slice's holes by their numbers: one below the slice's own takes the rod from below, its

@@ -1,7 +1,7 @@
 import numpy as np
 import shapely
 from shapely.geometry import LineString, Point
-from . import Mode, Param, register
+from . import Mode, Param, register, spacing_params
 from ..model import Slice
 from ..geometry import as_multi, frame, rot_about, section_polygons, to_local, to_world
 from ..notch import interlock
@@ -24,6 +24,8 @@ class Interlocked(Mode):
         Param("rotate_grid", "number", 0, "Rotate the grid about the assembly axis (deg)", 0, 180, 5, unit="deg"),
         Param("extra_x", "chips", [], "Extra 1st-family slices at these positions, measured from the centre — added by the fix buttons", unit="mm"),
         Param("extra_y", "chips", [], "Extra 2nd-family slices at these positions, measured from the centre", unit="mm"),
+        *spacing_params("slices", [("spacing_curve", "1st family spacing", [[0, 15], [0.5, 15], [1, 15]]),
+                                   ("spacing_curve_y", "2nd family spacing", [[0, 15], [0.5, 15], [1, 15]])], 3, 40, count="nx / ny"),
     ]
 
     def axes(self, ctx):
@@ -49,7 +51,9 @@ class Interlocked(Mode):
         for name, group, e, L, c, n, extra in ((name1, "X", e1, L1, c1, n1, p["extra_x"]), (name2, "Y", e2, L2, c2, n2, p["extra_y"])):
             # auto-fix's extra slices are numbered after the family's own, so a slice keeps its label — and the edits
             # keyed by it: offset, tilt, skip, thick … — when one is added before it; built in position order all the same
-            named = [(s, f"{name}-{j + 1}") for j, s in enumerate(ctx.positions(L, [p["thickness"]] * n))]
+            drawn = ctx.spaced("spacing_curve" if group == "X" else "spacing_curve_y", L, n)   # a curve per family, along its own axis
+            at = [-L / 2 + q for q in drawn] if drawn is not None else ctx.positions(L, [p["thickness"]] * n)
+            named = [(s, f"{name}-{j + 1}") for j, s in enumerate(at)]
             named += [(float(s), f"{name}-{n + j + 1}") for j, s in enumerate(sorted(float(x) for x in extra))]
             fams.append(ctx.keep([Slice(lab, group, ctx.frame(lab, ctx.mid + e * (c + s), e, up_hint=eu), ctx.thickness_of(lab))
                                   for s, lab in sorted(named)]))

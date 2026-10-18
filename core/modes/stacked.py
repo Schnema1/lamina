@@ -6,7 +6,7 @@ import shapely
 import shapely.affinity
 from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
-from . import Mode, Param, register
+from . import Mode, Param, register, spacing_params
 from ..model import ABC
 from ..model import Slice
 from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, mark_box, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
@@ -62,6 +62,7 @@ class Stacked(Mode):
         Param("dowel_shape", "choice", "round", "Dowel hole shape (round, square, pencil = hexagon, cross, horizontal / vertical slot)", choices=["round", "square", "pencil", "cross", "hslot", "vslot"], show_if=("connect", "dowel")),
         Param("placement", "choice", "aligned", "aligned = the same points through the whole stack, so each dowel is one straight rod (every island that persists gets its own); to move one or add your own, alt-click a slice in the 3D view or type it under dowels · random = new points for every pair of slices, spread as far apart as that pair allows, so no two layers share a hole · lines = straight dowels you draw yourself, start → end, holes wherever they cross between two slices", choices=["aligned", "random", "lines"], show_if=("connect", ["dowel", "tab"])),
         Param("n_points", "int", 2, "Connection points per pair of slices (per island)", 1, 20, 1, show_if=("placement", ["aligned", "random"])),
+        *spacing_params("slices", [("spacing_curve", "slice spacing", [[0, 10], [0.5, 10], [1, 10]])], 3, 30),
         Param("dowels", "points", [], "Your own dowels, on top of the automatic ones (n_points), each straight through every layer it fits (x, y in the slice plane, 0, 0 = the middle of the model). Alt-click a slice in the 3D view to add one there or remove the one you click; type its x, y here to move it", unit="mm", show_if=("placement", "aligned")),
         Param("lines", "lines3", [], "Each line is one straight dowel through the stack: a start and an end point in "
               "the model's own x, y, z (0, 0, 0 is the middle of the model). Every pair of slices the line passes through "
@@ -82,7 +83,16 @@ class Stacked(Mode):
         p = ctx.p
         ax = "xyz".index(p["axis"]); normal = ctx.ax[ax]; up = ctx.ax[(ax + 2) % 3]
         length = ctx.ext[ax]; t = p["thickness"]; gap = p["space"]
-        if p["distribution"] == "count":
+        drawn = ctx.spaced("spacing_curve", length - 2 * p["margin"], p["count"])
+        if drawn is not None:                             # the spacing curve: slices where it puts them, the stack as tall as the model
+            labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(len(drawn))]
+            th = [ctx.thickness_of(l) for l in labels]; pos = [-length / 2 + p["margin"] + q for q in drawn]
+            tight = [(a, b, z2 - z1) for a, b, z1, z2, t1, t2 in zip(labels, labels[1:], pos, pos[1:], th, th[1:]) if z2 - z1 < (t1 + t2) / 2 - 1e-6]
+            if tight:
+                a, b, g = min(tight, key=lambda x: x[2])
+                ctx.errors.append(f"spacing curve: {len(tight)} pair(s) of slices overlap — {a} and {b} are {g:.1f} mm apart, less than the material: "
+                                  f"raise the curve there or `spacing from`, use fewer slices, or thinner material")
+        elif p["distribution"] == "count":
             labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(p["count"])]
             th = [ctx.thickness_of(l) for l in labels]; pos = ctx.positions(length, th)
         else:
@@ -94,7 +104,8 @@ class Stacked(Mode):
         self.profiles(ctx, slices)
         slices = [s for s in slices if not s.raw.is_empty]
         ctx.rods = []
-        ctx.cover_r = (t + gap) / 2 + 0.5 if p["distribution"] == "distance" else length / (2 * max(1, len(slices))) + 0.5
+        ctx.cover_r = (max(np.diff(pos)) / 2 + 0.5 if len(pos) > 1 else length / 2) if drawn is not None else \
+            (t + gap) / 2 + 0.5 if p["distribution"] == "distance" else length / (2 * max(1, len(slices))) + 0.5
         if p["space"] > 0 and p["connect"] == "none":
             ctx.errors.append(f"space = {p['space']:g} mm between slices but no connectors — the slices would float: set connect to tab (spacers) or dowel, or set space to 0")
         if p["connect"] == "none" or len(slices) < 2:
@@ -353,7 +364,7 @@ class Stacked(Mode):
         tab_w, sw = (d if gap == 0 else d * 0.6), t + p["slot_offset"]    # a tab's width along its slot, the slot's width
         reach = math.hypot(tab_w, sw) / 2 if tab else margin - mf          # how far a cut reaches from its centre, any way it turns
 
-        def cut(x, y, ang):
+        def cut(x, y, ang, tab_w=tab_w):
             """What one connector cuts into a slice at its local (x, y): the dowel's hole, or the slot a tab goes into."""
             if not tab:
                 return dowel((x, y), d + p["slot_offset"], p["dowel_shape"])
@@ -388,6 +399,11 @@ class Stacked(Mode):
             hole at the unstepped point, every second pair of an aligned stack lost all its spacers to the slots of
             the pair before, and the layers they held were cut off as floating."""
             nonlocal k
+            # the gap this pair really has: the drawn spacing curve spreads pairs unevenly, and a pair's spacer is as
+            # long as its own gap — a peg where the two touch, a spacer with a body where they do not
+            spacing = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2]))
+            gap_i = max(0.0, round(spacing - (a.thickness + b.thickness) / 2, 3))
+            tab_w_i = d if gap_i < 1e-6 else d * 0.6
             if tab:
                 ang = {"x": 0.0, "y": 90.0, "alternate": 90.0 * (j % 2)}[p["spacer_dir"]]
                 step = d * 1.2 * (1 if i % 2 else -1)
@@ -400,12 +416,11 @@ class Stacked(Mode):
                 xa, ya = x + dx * s, y + dy * s
                 xb, yb = to_local(b.M, [(a.M @ np.array([xa, ya, 0, 1]))[:3]])[0]
                 ka, kb = (round(xa, 2), round(ya, 2), ang), (round(xb, 2), round(yb, 2), ang)
-                ga, gb = cut(xa, ya, ang), cut(xb, yb, ang)
+                ga, gb = cut(xa, ya, ang, tab_w_i), cut(xb, yb, ang, tab_w_i)
                 if fits(a, ga, ka) and fits(b, gb, kb):
                     break
             else:
                 return None
-            spacing = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2]))
             pt = tuple((a.M @ np.array([xa, ya, spacing / 2, 1]))[:3])           # world point in the gap: the connection's identity
             # the connector's name: the lower slice's and a letter (Z-3a, Z-3b …), or the name the hole in `a` already
             # has when a straight rod from the pair below carries on through this one
@@ -422,8 +437,8 @@ class Stacked(Mode):
             k += 1
             M = frame_xy(np.array(pt), a.M[:3, :3] @ np.array([dx, dy, 0]), a.M[:3, 2])   # piece plane: spacer direction × stack normal
             L = spacing + t                                                     # from the far side of a to the far side of b
-            body = Polygon([(-d / 2, -gap / 2), (d / 2, -gap / 2), (d / 2, gap / 2), (-d / 2, gap / 2)]) if gap > 0 else None
-            tabs = Polygon([(-tab_w / 2, -L / 2), (tab_w / 2, -L / 2), (tab_w / 2, L / 2), (-tab_w / 2, L / 2)])
+            body = Polygon([(-d / 2, -gap_i / 2), (d / 2, -gap_i / 2), (d / 2, gap_i / 2), (-d / 2, gap_i / 2)]) if gap_i > 0 else None
+            tabs = Polygon([(-tab_w_i / 2, -L / 2), (tab_w_i / 2, -L / 2), (tab_w_i / 2, L / 2), (-tab_w_i / 2, L / 2)])
             sl = Slice(name, "P", M, t)                                       # the peg is the connector: it carries its name
             sl.raw = as_multi(unary_union([body, tabs]) if body is not None else tabs)
             sl.pair = i

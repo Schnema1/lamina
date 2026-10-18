@@ -22,7 +22,8 @@ MAX_SLICES = 500                      # the count slider's ceiling, and the ceil
 #   map           per-slice numbers (edited from the 3D view)   value: {label: number}
 #   labels        list of slice labels (chips)                  value: [label, …]
 #   chips         list of numbers or labels                   value: [v, …]
-LIST_TYPES = ("vec2", "vec3", "points", "lines3", "map", "labels", "chips")
+#   curve         the spacing curve, drawn in the graph under the 3D view   value: [[t, s], …] t 0..1, s mm or deg
+LIST_TYPES = ("vec2", "vec3", "points", "lines3", "map", "labels", "chips", "curve")
 
 
 @dataclass
@@ -60,6 +61,25 @@ class Param:
 
 def P(name, type, default, help="", min=None, max=None, step=None, **kw):
     return Param(name, type, default, help, min, max, step, **kw)
+
+
+def spacing_params(what, curves, lo, hi, unit="mm", count="count"):
+    """The parameters of a drawn spacing curve, for a technique whose slices are spread along an axis: the switch, the
+    curve(s) — (name, label, default points) each, drawn in the graph under the 3D view — the range the graph shows,
+    and whether the count or the curve is what is kept. `what`: what is spread (slices, ribs, planes)."""
+    u = "°" if unit == "deg" else "mm"
+    out = [P("spacing_vary", "bool", False, f"Vary the spacing of the {what} along the way: draw the distance between neighbours against the "
+             "position in the graph under the 3D view — dense where the shape changes fast, sparse where it does not. The curve between "
+             "the points never overshoots them. Off = evenly spread", label="vary the spacing")]
+    for name, label, default in curves:
+        out.append(P(name, "curve", default, f"The spacing of the {label}: control points (position 0…1 along the way, spacing in {u}), "
+                     "drawn in the graph under the 3D view", show_if=("spacing_vary", True), label=label))
+    out += [P("spacing_fix", "choice", "count", f"count = `{count}` is kept and the drawn spacings are scaled to span the model, so what is drawn "
+              f"is their proportion; curve = the spacings are cut as drawn and the number of {what} follows", choices=["count", "curve"],
+              show_if=("spacing_vary", True), label="keep", choice_labels={"count": f"the count ({count})", "curve": "the spacings as drawn"}),
+            P("spacing_min", "number", lo, f"The least spacing the curve can draw ({u}): the graph's bottom", 0.1, 10000, 0.5, unit=unit, show_if=("spacing_vary", True), label="spacing from"),
+            P("spacing_max", "number", hi, f"The most spacing the curve can draw ({u}): the graph's top", 0.2, 10000, 0.5, unit=unit, show_if=("spacing_vary", True), label="spacing to")]
+    return out
 
 
 # parameters shared by every mode
@@ -238,6 +258,7 @@ class Ctx:
         # what the technique hands the 3D view: dowel rods, a curve and its points, fan axes / branches, the planes between lobes
         self.rods, self.curve3d, self.curve_pts, self.axes3d, self.bounds3d = [], None, None, None, []
         self.core_d_min = None    # radial: the smallest core the half-slices allow
+        self.spacing = []         # the drawn spacing curves' outcome, for the graph: [{param, positions, length, unit, scale}]
         self.stack, self.common_pts = [], None   # stacked: the layers in order, and the dowel points they all share (cached)
 
     def override(self, key, label, default=0.0):
@@ -249,6 +270,22 @@ class Ctx:
 
     def thickness_of(self, label):
         return self.override("thick", label, self.p["thickness"])
+
+    def spaced(self, param, length, count, periodic=False, unit="mm"):
+        """Positions from the drawn spacing curve `param` along `length` (0 at the start), or None when the spacing is
+        even: `count` of them with `spacing_fix` = count, else as many as the curve gives (up to MAX_SLICES). What
+        it gave goes to the plan, for the graph's ticks and the note about the scale."""
+        from ..spacing import spaced
+        p = self.p
+        if not p.get("spacing_vary"):
+            return None
+        pos, k = spaced(p[param] or [], length, p["spacing_min"], max(p["spacing_max"], p["spacing_min"] + 1e-6),
+                        count if p["spacing_fix"] == "count" else None, periodic, MAX_SLICES)
+        self.spacing.append({"param": param, "positions": [round(float(q), 3) for q in pos], "length": float(length), "unit": unit, "scale": round(float(k), 4)})
+        if abs(k - 1) > 0.5 and p["spacing_fix"] == "count":
+            self.notes_extra = " · ".join(x for x in [self.notes_extra, f"spacing curve ({param}): the count and the drawn spacings disagree — "
+                                                      f"the curve is scaled {k:.2f}× to fit {len(pos)}; change the count or the curve"] if x)
+        return pos
 
     def frame(self, label, origin, normal, up_hint=(0, 0, 1)):
         """Slice frame with the user's per-slice edits applied: offset along the normal, tilt/roll about the in-plane

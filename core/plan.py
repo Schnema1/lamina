@@ -608,6 +608,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         "curve3d": ctx.curve3d, "curve_pts": ctx.curve_pts,
         "axes3d": ctx.axes3d,                                                # radial's fan axes, curve's branches: drawn and dragged in 3D
         "bounds3d": ctx.bounds3d,                                            # the planes between lobes or at a branch's joint, moved and tilted like slices
+        "spacing": ctx.spacing,                                              # what the drawn spacing curves gave: positions along each axis, for the graph
         "rods": ctx.rods,                                                    # dowel rods for the 3D view and the key: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis,name (Z-3a),from slice,to slice]
         "params_used": {k: p[k] for k in ("extra_x", "extra_y", "ring_count") if k in p},   # what autofix=add changed
         "sheets": n_sheets, "sheet": sheet_out, "sheet_thick": sheet_thick, "kerf": kerf,
