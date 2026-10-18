@@ -49,18 +49,28 @@ def _strips(profile, axis, sheet, margin, tab_w, sl):
     lo, hi = (x0, x1) if axis == 0 else (y0, y1)
     cuts = list(np.linspace(lo, hi, n + 1))
     big = 10 * max(w, h) + 1000
-    # a cut through a hole or slot would leave half a connector on each piece: slide each internal cut sideways to
-    # the nearest position that misses every hole, as long as both neighbouring pieces still fit the sheet
+    # A cut through a hole or slot would leave half a connector on each piece, and a cut along the line where the
+    # slots of the other family end leaves the band beyond it in loose pieces held by nothing (the tall bar's lower
+    # half came apart into three). Each internal cut slides sideways to the nearest position that misses every hole
+    # and leaves the piece on each side of it in one region, as long as both still fit the sheet.
     holes = [Polygon(r) for poly in as_multi(profile).geoms for r in poly.interiors]
     cut_line = lambda x: LineString([(x, -big), (x, big)] if axis == 0 else [(-big, x), (big, x)])
+    band = lambda a, b: box(a, -big, b, big) if axis == 0 else box(-big, a, big, b)
+    whole = len(as_multi(profile).geoms)                  # a slice that is islands already stays as many
+    def clean(k, x):
+        return (not any(h.intersects(cut_line(x)) for h in holes)
+                and len(as_multi(profile.intersection(band(cuts[k - 1], x))).geoms) <= whole
+                and len(as_multi(profile.intersection(band(x, cuts[k + 1]))).geoms) <= whole)
     for k in range(1, n):
-        if not any(h.intersects(cut_line(cuts[k])) for h in holes):
+        if clean(k, cuts[k]):
             continue
         for d in sorted((s * j * tab_w for j in range(1, 40) for s in (1, -1)), key=abs):
             x = cuts[k] + d
-            if (cuts[k - 1] + 2 * tab_w < x < cuts[k + 1] - 2 * tab_w and x - cuts[k - 1] <= usable and cuts[k + 1] - x <= usable
-                    and not any(h.intersects(cut_line(x)) for h in holes)):
+            if cuts[k - 1] + 2 * tab_w < x < cuts[k + 1] - 2 * tab_w and x - cuts[k - 1] <= usable and cuts[k + 1] - x <= usable and clean(k, x):
                 cuts[k] = x; break
+        else:
+            sl.errors.append(f"no split position across {'x' if axis == 0 else 'y'} keeps the pieces whole: every one leaves a loose region held by nothing — "
+                             f"a bigger sheet, `one_sheet`, a smaller model, or fewer crossing slices")
     sl.split_cuts = cuts
     pieces_geom = []
     for i in range(n):

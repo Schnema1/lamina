@@ -238,8 +238,8 @@ def orient_arrows(region, longest=8.0, keep=()):
         return []
     disc = max((shapely.maximum_inscribed_circle(g, 0.5) for g in region.geoms), key=lambda c: c.length)
     (cx, cy), r = disc.coords[0], disc.length
-    L = min(longest, r - 0.6)
-    if L < 2.5:
+    L = min(longest, 0.6 * r)                   # well inside the clearance: on a small part the arrows must not read as its edge
+    if L < 3.0:
         return []
     out = []
     for dx, dy, length in ((0, 1, L), (1, 0, 0.65 * L)):

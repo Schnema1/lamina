@@ -707,7 +707,7 @@ def _slice_json(sl):
                     "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
                     "marks": [[round(m[0], 3), round(m[1], 3), m[2], round(mark_rot(m), 2)] for m in pc.placed_marks],
                     "kerfed_marks": [[round(m[0], 3), round(m[1], 3), m[2], round(mark_rot(m), 2)] for m in pc.marks],
-                    "label_pos": pc.label_pos, "label_size": pc.label_size, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
+                    "label_pos": pc.label_pos, "label_size": pc.label_size, "label_short": pc.label_short, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
                     "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight
                     } for pc in sl.pieces],
     }

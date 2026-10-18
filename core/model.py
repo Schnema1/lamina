@@ -97,11 +97,13 @@ class Piece:
     marks: list = field(default_factory=list)     # [(x, y, text)] local
     place: tuple | None = None  # (sheet, x, y, rot) set by pack(); rot in degrees
     kerfed: MultiPolygon | None = None
+    nest_shape: MultiPolygon | None = None  # what the nester keeps clear: the kerfed outline, plus the room for a label beside a part too small to carry one
     placed: MultiPolygon | None = None      # kerf-compensated, on the sheet
     placed_lines: list = field(default_factory=list)
     placed_marks: list = field(default_factory=list)
     label_pos: tuple | None = None          # (x, y, rotation) of the label text on the sheet
     label_size: float | None = None         # the label's capital height: the job's font, or smaller where that was all that fit
+    label_short: bool = False               # the label engraved without the model's short name: all a small part had room for
     leader: tuple | None = None             # ((x0, y0), (x1, y1)) label → part
     crowded: bool = False                   # the label sits on the part only because no free spot beside it was found
     same: list = field(default_factory=list)     # labels of the pieces cut from this same outline (mark_identical)

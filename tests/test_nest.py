@@ -251,8 +251,9 @@ def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mo
     for si in range(plan["sheets"]):
         on = [pc for pc in pieces if pc["place"][0] == si]
         parts = {pc["label"]: shapely.union_all([Polygon(r[0], r[1:]) for r in pc["placed"]]) for pc in on}
-        rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{tag} {pc['label']}".strip(), pc["label_size"])) for pc in on}
-        assert all(pc["label_size"] == font for pc in on), [(pc["label"], pc["label_size"]) for pc in on if pc["label_size"] != font]   # room for every one at full size
+        rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{'' if pc['label_short'] else tag} {pc['label']}".strip(), pc["label_size"])) for pc in on}
+        # room for every one in full, or at four fifths right beside the part, which wins over a full one farther away
+        assert all(pc["label_size"] >= 0.8 * font - 1e-9 and not pc["label_short"] for pc in on), [(pc["label"], pc["label_size"]) for pc in on if pc["label_size"] < 0.8 * font]
         for pc in on:
             lab, r = pc["label"], rects[pc["label"]]
             if pc["leader"] is None:                                            # on the part: whole, and off its marks

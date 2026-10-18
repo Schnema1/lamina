@@ -40,7 +40,7 @@ class Item:
         self.key = pc["label"]
         self.size = pc.get("label_size")         # the label's capital height, when the sheet had to shrink it (else the font)
         # `tag` is the model's name (plan["label_tag"]), engraved first so parts of two models never get mixed up
-        self.label = (f"{tag} " if tag else "") + (names or {}).get(pc["label"], pc["label"]) + (f" {note}" if note else "")
+        self.label = (f"{tag} " if tag and not pc.get("label_short") else "") + (names or {}).get(pc["label"], pc["label"]) + (f" {note}" if note else "")
         self.label_pos = pc.get("label_pos")
         self.leader = pc.get("leader")
         self.scores = pc.get("lines") or []
@@ -83,7 +83,7 @@ def _free_spot(plan, w, h, step=10.0):
                 boxes.append((min(xs), min(ys), max(xs), max(ys)))
                 lp = pc.get("label_pos")
                 if lp:
-                    lw, lh = label_box(f"{plan.get('label_tag') or ''} {pc['label']}".strip(), pc.get("label_size") or font)
+                    lw, lh = label_box(f"{'' if pc.get('label_short') else plan.get('label_tag') or ''} {pc['label']}".strip(), pc.get("label_size") or font)
                     boxes.append((lp[0] - lw / 2, lp[1] - lh / 2, lp[0] + lw / 2, lp[1] + lh / 2))
         B = np.array(boxes) if boxes else np.zeros((0, 4))
         for y in np.arange(H - m - h, m - 1e-9, -step):
@@ -395,7 +395,8 @@ def key_text(plan):
         out.append(f"  Every label starts with {plan['label_tag']}, short for {p.get('project') or p.get('model_name') or 'the model'}: parts of two models cut together are never mixed up.")
     out += ["  A part too big for the sheet is cut into pieces and the piece number comes last: Z-3-2 is the second piece of Z-3.",
             {"on": "  Each label is engraved on its own part.", "beside": "  Each label is engraved beside its own part on the sheet, with a line pointing at it."}
-            .get(p.get("label_place"), "  Each label is engraved on its own part where it fits, else beside it on the sheet with a line pointing at it.")]
+            .get(p.get("label_place"), "  Each label is engraved on its own part where it fits, else beside it on the sheet with a line pointing at it."),
+            "  A small part may carry its name without the short name in front: that was all it had room for."]
     if p.get("orient_mark"):
         out.append("  The two arrows at the middle of each part: the engraved face is the front, and the long arrow points the same way on "
                    "every part (up the slice's own frame), the short one to its right — turn the parts until their arrows agree.")
