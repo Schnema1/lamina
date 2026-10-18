@@ -7,7 +7,8 @@ Layers / colours follow Slicer's Cut Layout convention:
   INNER   green   #00aa00   interior cuts (slots, holes)
   SCORE   yellow  #d4a800   fold lines (folded panels): solid = mountain, dashed = valley (dotted = perforate) — score, do not cut
   GUIDE   orange  #ff8800   the next layer's outline engraved on the slice below it (stacked, `next_outline`) — engrave, do not cut
-  LABEL   red     #ff0000   part labels + leader lines + sheet border (engrave / do not cut)
+  LABEL   red     #ff0000   part labels + leader lines + sheet border (engrave / do not cut). Every text is drawn in a
+                            single-stroke font (core.font): open polylines the laser engraves in one pass, in every format
 """
 from __future__ import annotations
 import argparse, html, json, pathlib
@@ -16,6 +17,7 @@ import numpy as np
 import shapely
 from ezdxf import units as dxfunits
 from shapely.geometry import LineString, Polygon, box
+from .font import strokes as glyphs
 from .geometry import as_multi, inside_spot, label_box, poly_coords
 
 COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
@@ -93,14 +95,16 @@ def scale_check_item(plan, si):
         return None
     pc, note, w, h = scale_check_piece(plan)
     font = plan["params"].get("font", 4.0)
+    lw, lh = label_box(f"{pc['label']} {note}", font)
+    block = max(w, lw)                               # the bar with its note above it: the note is the wider of the two
     if "scale_check" not in plan:
-        plan["scale_check"] = _free_spot(plan, w, h + font * 1.8) or {}
+        plan["scale_check"] = _free_spot(plan, block, h + lh + 1) or {}
     spot = plan["scale_check"]
     if spot.get("sheet") != si:
         return None
-    x, y = spot["x"], spot["y"]
+    x, y = spot["x"] + (block - w) / 2, spot["y"]    # the bar centred under its note
     placed = [[[(px + x, py + y) for px, py in ring] for ring in region] for region in pc["kerfed"]]
-    return Item({**pc, "placed": placed, "label_pos": (x + w / 2, y + h + font * 0.9, 0), "leader": None}, "placed", note)
+    return Item({**pc, "placed": placed, "label_pos": (x + w / 2, y + h + 1 + lh / 2, 0), "leader": None}, "placed", note)
 
 
 def identical_groups(plan):
@@ -166,14 +170,16 @@ def strokes(items):
 
 
 def texts(items, font):
-    """Every text to engrave, item by item, as (x, y, rotation, text, size, leader): the marks (joint numbers, at 0.6 of
-    the font; never turned, so rotation None) then the label at `font`, with the leader line from it to its part."""
+    """Every text to engrave, item by item, as (text, its strokes, leader): the marks (joint numbers, at 0.6 of the
+    font, never turned) then the label at `font`, turned as the sheet placed it, with the leader line from it to its
+    part. The strokes are the single-stroke font's polylines, centred on the text's spot, in sheet mm — the same
+    lines in every format, so what the laser engraves never depends on a font the machine's software has."""
     for it in items:
         for x, y, t in it.marks:
-            yield x, y, None, str(t), font * 0.6, None
+            yield str(t), glyphs(str(t), font * 0.6, x, y), None
         if it.label_pos:
             x, y, rot = it.label_pos
-            yield x, y, rot, it.label, font, it.leader
+            yield it.label, glyphs(it.label, font, x, y, rot), it.leader
 
 
 # ------------------------------------------------------------------ SVG
@@ -236,16 +242,18 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
             out.append(f'<path{tag} d="{d}"{dash}/>')
         out.append("</g>")
     if labels or border:
-        out.append(f'<g id="LABEL" fill="{COLORS["LABEL"]}" stroke="{COLORS["LABEL"]}" stroke-width="0.15" font-family="sans-serif" font-size="{font}">')
+        def path(text, sts):
+            """One text: one path of open strokes, its words in data-text (what the tests and a reader of the file go by)."""
+            d = " ".join(" ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{height - y:.3f}" for i, (x, y) in enumerate(st)) for st in sts)
+            return f'<path data-text="{html.escape(text, quote=True)}" d="{d}"/>'
+        out.append(f'<g id="LABEL" fill="none" stroke="{COLORS["LABEL"]}" stroke-width="0.15" stroke-linecap="round" stroke-linejoin="round">')
         if border:
-            out.append(f'<rect x="0" y="0" width="{width}" height="{height}" fill="none"/>')
+            out.append(f'<rect x="0" y="0" width="{width}" height="{height}"/>')
         if title:
-            out.append(f'<text x="{font * 0.5}" y="{font * 1.2}" stroke="none">{html.escape(title)}</text>')
+            out.append(path(title, glyphs(title, font, font * 0.5, height - font * 1.2, anchor="start")))
         if labels:
-            for x, y, rot, text, size, leader in texts(items, font):
-                # a mark is never turned and sets its own size; a label is at the group's size and says its turn
-                at = f' font-size="{size}"' if rot is None else f' transform="rotate({-rot} {x:.2f} {height - y:.2f})"'
-                out.append(f'<text x="{x:.2f}" y="{height - y:.2f}"{at} text-anchor="middle" dominant-baseline="middle" stroke="none">{html.escape(text)}</text>')
+            for text, sts, leader in texts(items, font):
+                out.append(path(text, sts))
                 if leader:
                     (ax, ay), (bx, by) = leader
                     out.append(f'<line x1="{ax:.2f}" y1="{height - ay:.2f}" x2="{bx:.2f}" y2="{height - by:.2f}"/>')
@@ -267,9 +275,9 @@ def dxf_doc(items, labels, border=None, font=4.0, units="mm"):
     for layer, pts, closed, style, _ in strokes(items):        # a cut ring takes its layer's linetype; a line names its own
         msp.add_lwpolyline(S(pts), close=closed, dxfattribs={"layer": layer} if closed else {"layer": layer, "linetype": DASH[style][2]})
     if labels:
-        for x, y, rot, text, size, leader in texts(items, font):
-            at = {"layer": "LABEL"} if rot is None else {"layer": "LABEL", "rotation": rot}
-            msp.add_text(text, height=size * f, dxfattribs=at).set_placement((x * f, y * f), align=ezdxf.enums.TextEntityAlignment.MIDDLE_CENTER)
+        for _, sts, leader in texts(items, font):
+            for st in sts:
+                msp.add_lwpolyline(S(st), dxfattribs={"layer": "LABEL"})
             if leader:
                 msp.add_line(tuple(v * f for v in leader[0]), tuple(v * f for v in leader[1]), dxfattribs={"layer": "LABEL"})
     if border:
@@ -305,14 +313,12 @@ def pdf_doc(path, pages, labels, border, font):
         if border:
             c.rect(0, 0, w * PT, h * PT, stroke=1, fill=0)
         if labels:
-            cur = None                                        # the font is set when the size changes, not per text
-            for x, y, rot, text, size, leader in texts(items, font):
-                if size != cur:
-                    cur = size; c.setFont("Helvetica", size * PT)
-                if rot is None:
-                    c.drawCentredString(x * PT, y * PT - size * PT * 0.35, text)
-                else:
-                    c.saveState(); c.translate(x * PT, y * PT); c.rotate(rot); c.drawCentredString(0, -size * PT * 0.35, text); c.restoreState()
+            c.setLineCap(1); c.setLineJoin(1)                 # round: a stroke font's corners, like the laser draws them
+            for _, sts, leader in texts(items, font):
+                for st in sts:
+                    p = c.beginPath(); p.moveTo(st[0][0] * PT, st[0][1] * PT)
+                    for x, y in st[1:]: p.lineTo(x * PT, y * PT)
+                    c.drawPath(p, stroke=1, fill=0)
                 if leader:
                     c.line(leader[0][0] * PT, leader[0][1] * PT, leader[1][0] * PT, leader[1][1] * PT)
         c.showPage()
@@ -321,8 +327,7 @@ def pdf_doc(path, pages, labels, border, font):
 
 # ------------------------------------------------------------------ EPS — hand-written PostScript, one file per sheet
 def eps_doc(items, w, h, labels, border, font):
-    out = ["%!PS-Adobe-3.0 EPSF-3.0", f"%%BoundingBox: 0 0 {int(w * PT + 1)} {int(h * PT + 1)}", "0.3 setlinewidth",
-           f"/Helvetica findfont {font * PT:.2f} scalefont setfont"]
+    out = ["%!PS-Adobe-3.0 EPSF-3.0", f"%%BoundingBox: 0 0 {int(w * PT + 1)} {int(h * PT + 1)}", "0.3 setlinewidth"]
 
     def path(pts, close):
         s = " ".join(f"{x * PT:.2f} {y * PT:.2f} {'moveto' if i == 0 else 'lineto'}" for i, (x, y) in enumerate(pts))
@@ -336,10 +341,9 @@ def eps_doc(items, w, h, labels, border, font):
     if border:
         out.append(path([(0, 0), (w, 0), (w, h), (0, h)], True))
     if labels:
-        for x, y, rot, text, size, leader in texts(items, font):
-            # a mark is never turned and sets its own size; a label is in the header's font and says its turn
-            own, turn = (f"/Helvetica findfont {size * PT:.2f} scalefont setfont ", "") if rot is None else ("", f"{rot} rotate ")
-            out.append(f"gsave {own}{x * PT:.2f} {y * PT:.2f} translate {turn}({text}) dup stringwidth pop -2 div {-size * PT * 0.35:.2f} moveto show grestore")
+        out.append("1 setlinecap 1 setlinejoin")
+        for _, sts, leader in texts(items, font):
+            out += [path(st, False) for st in sts]
             if leader:
                 out.append(path([leader[0], leader[1]], False))
     out.append("%%EOF")

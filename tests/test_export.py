@@ -131,8 +131,10 @@ def test_a_lone_part_file_puts_the_label_under_the_next_layer_like_the_sheet(tmp
     tree = etree.parse(str(next(f for f in files if " Z-2 " in f.name)))
     d = tree.xpath('//svg:g[@id="GUIDE"]/svg:path/@d', namespaces=SVG_NS)[0]
     ring = Polygon([tuple(map(float, xy.split(","))) for xy in re.findall(r"[ML]([-\d.]+,[-\d.]+)", d)])
-    label = next(t for t in tree.xpath('//svg:g[@id="LABEL"]/svg:text', namespaces=SVG_NS) if "Z-2" in t.text)
-    assert ring.covers(Point(float(label.get("x")), float(label.get("y"))))                  # in its file: the same spot
+    label = next(t for t in tree.xpath('//svg:g[@id="LABEL"]/svg:path', namespaces=SVG_NS) if "Z-2" in t.get("data-text"))
+    pts = [tuple(map(float, xy.split(","))) for xy in re.findall(r"[ML]([-\d.]+,[-\d.]+)", label.get("d"))]   # its strokes
+    xs, ys = zip(*pts)
+    assert ring.covers(Point((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2))               # in its file: the same spot
 
 
 def test_a_sliver_shed_from_the_layer_above_is_not_in_the_guide(tmp_path):
@@ -160,11 +162,11 @@ def test_a_lone_part_file_carries_its_seam_numbers(tmp_path):
     plan = build(EXAMPLES / "cube.stl", "folded", {"facet": 0, "joint": "laced", "autofix": "off"})
     pieces = {pc["label"]: pc for sl in plan["slices"] for pc in sl["pieces"]}
     assert any(pc["marks"] for pc in pieces.values())
-    font = plan["params"]["font"]
     for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True):
         lab = f.name.split(" ")[1]
         if lab in pieces:
-            small = etree.parse(str(f)).xpath(f'//svg:g[@id="LABEL"]/svg:text[@font-size="{font * 0.6}"]', namespaces=SVG_NS)
+            texts = etree.parse(str(f)).xpath('//svg:g[@id="LABEL"]/svg:path/@data-text', namespaces=SVG_NS)
+            small = [t for t in texts if lab not in t]                     # every text but the part's own label is a seam number
             assert len(small) == len(pieces[lab]["marks"]) == len(pieces[lab]["kerfed_marks"]), lab
 
 
@@ -174,7 +176,7 @@ def test_a_plain_per_piece_export_engraves_no_label(tmp_path):
     assert len(files) > 2
     for f in files:
         if f.suffix == ".svg":
-            assert not etree.parse(str(f)).xpath('//svg:text', namespaces=SVG_NS), f.name
+            assert not etree.parse(str(f)).xpath('//svg:path[@data-text]', namespaces=SVG_NS), f.name
 
 
 def test_a_name_in_another_script_still_exports_and_downloads(tmp_path):
@@ -197,8 +199,8 @@ def test_svg_score_and_label_counts_folded(tmp_path):
     score_g = tree.xpath('//svg:g[@id="SCORE"]', namespaces=SVG_NS)[0]
     label_g = tree.xpath('//svg:g[@id="LABEL"]', namespaces=SVG_NS)[0]
     assert len(score_g.xpath('.//svg:path', namespaces=SVG_NS)) == exp["score"]
-    # LABEL text = per-piece marks + per-piece label + the sheet title text
-    assert len(label_g.xpath('.//svg:text', namespaces=SVG_NS)) == exp["marks"] + exp["label_pos"] + 1
+    # LABEL texts (one stroke path each) = per-piece marks + per-piece label + the sheet title
+    assert len(label_g.xpath('.//svg:path[@data-text]', namespaces=SVG_NS)) == exp["marks"] + exp["label_pos"] + 1
 
 
 def test_dxf_reloads_with_same_layers_and_matching_entity_counts(tmp_path):
@@ -211,10 +213,13 @@ def test_dxf_reloads_with_same_layers_and_matching_entity_counts(tmp_path):
         "INNER", "LABEL", "OUTER", "SCORE",
     ]
     msp = doc.modelspace()
-    # +1 lwpolyline for the sheet border rectangle that export() draws when border=True (the default)
-    assert len(list(msp.query("LWPOLYLINE"))) == exp["outer"] + exp["inner"] + exp["score"] + 1
-    # DXF gets one TEXT per mark + one per label, no separate sheet-title text (SVG-only)
-    assert len(list(msp.query("TEXT"))) == exp["marks"] + exp["label_pos"]
+    cut = [e for e in msp.query("LWPOLYLINE") if e.dxf.layer != "LABEL"]
+    assert len(cut) == exp["outer"] + exp["inner"] + exp["score"]
+    # the labels are strokes on the LABEL layer — at least one per mark and per label, open, beside the closed border
+    # rectangle export() draws when border=True (the default) — and never TEXT, which would take the reader's font
+    label = [e for e in msp.query("LWPOLYLINE") if e.dxf.layer == "LABEL"]
+    assert sum(1 for e in label if e.closed) == 1 and sum(1 for e in label if not e.closed) >= exp["marks"] + exp["label_pos"]
+    assert not list(msp.query("TEXT"))
 
 
 def test_a_project_name_is_text_in_the_svg_not_markup(tmp_path):
@@ -224,7 +229,7 @@ def test_a_project_name_is_text_in_the_svg_not_markup(tmp_path):
     export(plan, tmp_path, fmts=("svg",), labels=True)
     tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))                          # still well-formed…
     assert not tree.xpath("//*[local-name()='img']")                          # …and the tag is not an element
-    assert '<img' in "".join(tree.xpath('//svg:g[@id="LABEL"]/svg:text/text()', namespaces=SVG_NS))   # but text
+    assert '<img' in "".join(tree.xpath('//svg:g[@id="LABEL"]/svg:path/@data-text', namespaces=SVG_NS))   # but text
 
 
 def test_assembly_key_explains_the_labels_and_lists_every_part(tmp_path):
@@ -251,8 +256,8 @@ def test_puzzle_mode_engraves_codes_and_the_key_is_the_way_back(tmp_path):
     export(plan, tmp_path, fmts=("svg",), labels=True, key=True)
     sheets = "".join(f.read_text(encoding="utf-8") for f in sorted(tmp_path.glob("* sheet*.svg")))
     for label, code in codes.items():
-        assert f">egg {code}<" in sheets                  # engraved: the model's name and the code
-        assert f" {label}<" not in sheets                 # never where the part goes
+        assert f'data-text="egg {code}"' in sheets        # engraved: the model's name and the code
+        assert f' {label}"' not in sheets                 # never where the part goes
         assert f'data-label="{label}"' in sheets          # the sheet ↔ 3D selection is unchanged
     key = (tmp_path / f"{design_name(plan)} assembly-key.txt").read_text(encoding="utf-8")
     assert all(code in key and label in key for label, code in codes.items())
@@ -364,7 +369,7 @@ def test_fit_test_is_the_jobs_joints_at_five_offsets_on_a_small_stand_in(tmp_pat
     folders = {f.parent.name for f in cut if f.suffix == ".svg"}
     assert folders == {"fit_-0.10", "fit_0.00", "fit_0.10", "fit_0.20", "fit_0.30"}
     svg = next(f for f in cut if f.parent.name == "fit_0.30" and f.suffix == ".svg").read_text(encoding="utf-8")
-    assert svg.count(">0.30<") == 12 and "0.10, in the middle" in (tmp_path / "cut" / "README.txt").read_text(encoding="utf-8")
+    assert svg.count('data-text="0.30"') == 12 and "0.10, in the middle" in (tmp_path / "cut" / "README.txt").read_text(encoding="utf-8")
 
 
 def test_the_print_gets_its_own_slot_offset_in_printed_mm(tmp_path):

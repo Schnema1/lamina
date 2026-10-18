@@ -2,6 +2,17 @@
 
 What changed in each release. The GitHub release for a version is this section, pasted.
 
+## Unreleased
+
+### Changed
+
+- **Labels in a single-stroke font.** Every engraved text in the cut files — part labels, seam numbers, the sheet
+  title — is now drawn in a stroke font (Hershey Simplex): each letter is a few open lines the laser engraves in one
+  pass, the same lines in SVG, DXF, PDF and EPS. Text used to be left as text, which the laser's software filled with
+  whatever font it had and traced as the two edges of every letter, or dropped when the font was missing. The `font`
+  parameter is now the height of a capital letter in mm, so a 4 mm label has 4 mm capitals (it used to be a 4 mm
+  font size, with capitals under 3 mm); the labels take a little more room beside the parts for it.
+
 ## 0.2.5
 
 The first version with changes from outside Lamina: @Schnema1 sent three. A stacked slice can carry the outline of

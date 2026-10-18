@@ -87,7 +87,7 @@ COMMON: list[Param] = [
     P("sheet_margin", "number", 5, "Keep-out from the sheet edge (mm)", 0, 100, 0.5, group="sheet", unit="mm"),
     P("gap", "number", 3, "Gap between parts on the sheet (mm)", 0, 50, 0.5, group="sheet", unit="mm"),
     P("labels", "bool", True, "Engrave part labels (LABEL layer): beside each part with a leader line, or on the part itself — see `labels on the parts`", group="sheet"),
-    P("font", "number", 4.0, "Label text height (mm)", 1, 30, 0.5, group="sheet", unit="mm"),
+    P("font", "number", 4.0, "Height of a capital letter in the engraved labels (mm). Single-stroke lettering: the laser draws each letter as one line, not the two edges of a filled one", 1, 30, 0.5, group="sheet", unit="mm"),
     P("label_model", "bool", True, "Engrave the model's name before each label (bunny Z-3): two models have the same part names, "
       "and parts cut together would otherwise get mixed up. The project name when it has one. Off for a longer label's room "
       "beside small parts", group="sheet", show_if=("labels", True)),

@@ -294,7 +294,9 @@ does not slip through. It carries the most signal for stacked and folded work; d
 - **One sheet** ignores the sheet height: every part goes on one strip as wide as the sheet and as long as it needs,
   to be cut apart at the machine.
 - **Labels** are engraved beside the part with a leader line wherever there is room; only a fully crowded sheet puts
-  one on the part. `label_inside` puts every label on the part itself instead: inside the next layer's outline where
+  one on the part. Every engraved text is drawn in a single-stroke font (Hershey Simplex): open lines the laser
+  engraves in one pass, the same in every format, with no font for the machine's software to find or fill. `font` is
+  the height of a capital in mm. `label_inside` puts every label on the part itself instead: inside the next layer's outline where
   the technique marks one (stacked, `next_outline`), so the layer glued on top hides it, otherwise at the part's widest
   spot. A label too big for a small part is still placed, past the outline if it must, for you to trim in the laser
   software; no part ever comes out unlabelled.

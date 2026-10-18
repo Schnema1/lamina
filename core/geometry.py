@@ -137,9 +137,11 @@ def as_lines(g) -> MultiLineString:
 
 
 def label_box(text, font):
-    """The room an engraved label takes at `font` mm: (w, h), about 0.62 em a character and an em of 1.4 capitals, never
-    under 6 mm wide. The sheet placement and the per-piece export size a label the same way through this."""
-    return max(6.0, 0.62 * font * len(text) + 2), font * 1.4
+    """The room an engraved label takes at `font` mm (the height of a capital): (w, h) — the stroke font's own width
+    with a millimetre either side, never under 6 mm, and 1.4 capitals, which holds the descenders. The sheet
+    placement and the per-piece export size a label the same way through this."""
+    from .font import width
+    return max(6.0, width(text, font) + 2), font * 1.4
 
 
 def label_spot(mp, w, h, prefer=None):
