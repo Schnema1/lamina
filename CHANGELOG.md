@@ -4,42 +4,7 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ## Unreleased
 
-### Fixed
-
-- **What goes on a part, and in what order.** The orientation arrows, the dowel and seam numbers and the label used
-  to be placed without regard for each other. Now the numbers go first, the arrows take the widest spot they leave,
-  and the label goes on the part only where it fits with room to spare — otherwise beside it, searched outward over
-  the whole sheet, and as a last resort with its line running across whatever lies between. A label is never put
-  where it overruns its part again. The rectangle packing is tried beside the polygon nest and kept when it needs
-  fewer sheets. A part too small for its label at any size carries its name without the short name in front, which
-  the assembly key allows for, before the label goes far away on a line. A part that cannot carry even that is
-  nested with the room for its name reserved beside it, so the label sits next to the part on a packed sheet
-  instead of wherever a gap was left: the wavy torus's 68 spacers had their labels up to 35 cm away, now within
-  10 mm. The last resort may use the sheet's margin band, where the title already is.
-- **A split never leaves loose pieces.** A part too big for the sheet is cut into strips, and the cut used to be
-  free to fall exactly where the other family's slots end — the tall bar's lower half came apart into three pieces,
-  one a 13 × 73 mm triangle held by nothing. Each cut now slides sideways until the piece on either side of it is
-  whole, and when no position manages that the slice says so as an error.
-- **Orientation arrows keep well inside a small part**, at most six tenths of its clearance, and a part too small
-  for a legible pair gets none.
-- **Folded nets you can build.** Seam numbers were dropped at every seam's middle with no check, hundreds of them
-  over each other and across the fold lines of a scanned model's net. Each now reads along its own edge, on the tab
-  where the seam has one (as Pepakura prints them) or just inside the edge, only where the panel has room, and the
-  panel's warnings count the ones left off. A tab that would land on its own panel is put on the other side of the
-  seam instead of being dropped, which gave the cow example 49 more tabs. The hinge of a tab is scored across its
-  base only, where it used to run the whole seam under the cut line. The legend explains folds, cuts and how to read
-  the numbers.
-- **The assembly video names each part.** While the steps slider is short of the end, the 3D view carries the step
-  number and the name of the part going in at the top centre, drawn into the canvas, so the recorded video shows it.
-
-### Changed
-
-- **Each part is one group in the SVG**: its cuts, fold and guide lines, dowel numbers, arrows, label and leader line
-  sit in one `<g class="piece">` (with a sub-group per layer), so a part dragged elsewhere in Inkscape or Illustrator
-  takes its labels with it instead of leaving them behind. The border and title are the sheet's own group. Each
-  layer group keeps its colour, which is what laser software sorts by, so cut settings by colour work as before.
-- **Two stacked examples open with tab connectors**: the `tube` with pegs and the `wavy_torus` with spacers across
-  its 5 mm gaps, beside the dowelled ones, so both kinds of connector are on show.
+The release for the laser: every label in a single-stroke font, dowels named after their slices and numbered beside their holes, labels that keep clear of parts and of each other, orientation arrows, a four-letter short name, and non-uniform spacing drawn as a curve in every technique, with a graph to draw it. Folded nets got seam numbers that can be read and hinge lines for their tabs, the SVG keeps each part with its labels, and the assembly video names each part as it goes in.
 
 ### Added
 
@@ -72,6 +37,12 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ### Changed
 
+- **Each part is one group in the SVG**: its cuts, fold and guide lines, dowel numbers, arrows, label and leader line
+  sit in one `<g class="piece">` (with a sub-group per layer), so a part dragged elsewhere in Inkscape or Illustrator
+  takes its labels with it instead of leaving them behind. The border and title are the sheet's own group. Each
+  layer group keeps its colour, which is what laser software sorts by, so cut settings by colour work as before.
+- **Two stacked examples open with tab connectors**: the `tube` with pegs and the `wavy_torus` with spacers across
+  its 5 mm gaps, beside the dowelled ones, so both kinds of connector are on show.
 - **The model's name on each label is now a short code.** A label used to start with the whole project or model
   name — `horse_statue Y-12-2` is nineteen characters, most of them the name — which is what made the labels of a
   scanned model with a hundred small parts impossible to place. It now starts with up to four letters: the initials
@@ -97,6 +68,37 @@ What changed in each release. The GitHub release for a version is this section, 
   whatever font it had and traced as the two edges of every letter, or dropped when the font was missing. The `font`
   parameter is now the height of a capital letter in mm, so a 4 mm label has 4 mm capitals (it used to be a 4 mm
   font size, with capitals under 3 mm); the labels take a little more room beside the parts for it.
+
+### Fixed
+
+- **What goes on a part, and in what order.** The orientation arrows, the dowel and seam numbers and the label used
+  to be placed without regard for each other. Now the numbers go first, the arrows take the widest spot they leave,
+  and the label goes on the part only where it fits with room to spare — otherwise beside it, searched outward over
+  the whole sheet, and as a last resort with its line running across whatever lies between. A label is never put
+  where it overruns its part again. The rectangle packing is tried beside the polygon nest and kept when it needs
+  fewer sheets. A part too small for its label at any size carries its name without the short name in front, which
+  the assembly key allows for, before the label goes far away on a line. A part that cannot carry even that is
+  nested with the room for its name reserved beside it, so the label sits next to the part on a packed sheet
+  instead of wherever a gap was left: the wavy torus's 68 spacers had their labels up to 35 cm away, now within
+  10 mm. The last resort may use the sheet's margin band, where the title already is.
+- **The first sheet is filled before the second.** When the polygon nest and the plain rectangle packing need the
+  same number of sheets, the one that leaves less for the last sheet is kept: the tube's seven 3 mm rings went
+  five, two (the second row dropped into the valleys of the first and lost a column), now six and one.
+- **A split never leaves loose pieces.** A part too big for the sheet is cut into strips, and the cut used to be
+  free to fall exactly where the other family's slots end — the tall bar's lower half came apart into three pieces,
+  one a 13 × 73 mm triangle held by nothing. Each cut now slides sideways until the piece on either side of it is
+  whole, and when no position manages that the slice says so as an error.
+- **Orientation arrows keep well inside a small part**, at most six tenths of its clearance, and a part too small
+  for a legible pair gets none.
+- **Folded nets you can build.** Seam numbers were dropped at every seam's middle with no check, hundreds of them
+  over each other and across the fold lines of a scanned model's net. Each now reads along its own edge, on the tab
+  where the seam has one (as Pepakura prints them) or just inside the edge, only where the panel has room, and the
+  panel's warnings count the ones left off. A tab that would land on its own panel is put on the other side of the
+  seam instead of being dropped, which gave the cow example 49 more tabs. The hinge of a tab is scored across its
+  base only, where it used to run the whole seam under the cut line. The legend explains folds, cuts and how to read
+  the numbers.
+- **The assembly video names each part.** While the steps slider is short of the end, the 3D view carries the step
+  number and the name of the part going in at the top centre, drawn into the canvas, so the recorded video shows it.
 
 ## 0.2.5
 

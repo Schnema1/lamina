@@ -461,3 +461,49 @@ def test_connectors_are_named_after_their_lower_slice_and_marked_beside_their_ho
     pegs = [sl["label"] for sl in plan["slices"] if sl["group"] == "P"]
     assert pegs[:2] == ["Z-1a", "Z-1b"] and all(sl["label"].startswith("Z-") for sl in plan["slices"])
     assert marks(next(sl for sl in plan["slices"] if sl["label"] == "Z-1")) == ["1a", "1b"]
+
+
+def test_folded_seam_numbers_sit_on_material_clear_of_cuts_and_folds_and_tabs_fold_at_their_base():
+    """A seam number is only engraved where the whole of it lies on the panel (or its tab), clear of the cut edges,
+    the fold lines and the other numbers; a hinge is scored across each tab's base alone, never along the seam under
+    a cut. A seam with no room for its number says so in the panel's warnings instead of engraving it over a fold."""
+    from shapely.geometry import LineString, MultiPolygon, Polygon
+    from core.geometry import mark_box
+    plan = build(EXAMPLES / "cube.stl", "folded", {"size": [90, 0, 0], "joint": "ticked", "facet": 0, "inset": 6, "spacing": 30,
+                                                   "thickness": 1, "autofix": "off"})
+    font = plan["params"]["font"]
+    seen, numbers = 0, set()
+    for sl in plan["slices"]:
+        for pc in sl["pieces"]:
+            geom = MultiPolygon([Polygon(r[0], r[1:]) for r in pc["placed"]])
+            lines = [(s, LineString(pts)) for s, pts in pc["lines"]]
+            boxes = [mark_box(x, y, t, font, rot) for x, y, t, rot in pc["marks"]]
+            for b in boxes:
+                assert geom.buffer(-0.25).covers(b)                                   # on the material, off the edge
+                assert all(not b.intersects(ln) for _, ln in lines)                   # across no fold line
+            assert all(not a.intersects(b) for i, a in enumerate(boxes) for b in boxes[i + 1:])
+            for _, ln in lines:
+                assert geom.buffer(0.05).covers(ln) and ln.intersection(geom.boundary).length < 0.5   # inside, not along a cut
+            seen += len(boxes); numbers |= {t for _, _, t, _ in pc["marks"]}
+    left_off = sum(int(w.split()[0]) for sl in plan["slices"] for w in sl["warnings"] if "seam number(s) left off" in w)
+    assert len(numbers) >= 7 and seen + left_off == 2 * len(numbers)                     # every seam numbered on both sides, or counted
+
+
+def test_orientation_arrows_are_two_lines_inside_every_part_clear_of_its_marks():
+    """`orient_mark` engraves two arrows at the middle of each part, the same two directions on every part, inside the
+    material and touching no dowel number; off, a part carries none."""
+    from shapely.geometry import LineString, MultiPolygon, Polygon
+    from core.geometry import mark_box
+    params = {"distribution": "count", "count": 3, "autofix": "off", "connect": "dowel"}
+    on = build(EXAMPLES / "cube.stl", "stacked", {**params, "orient_mark": True})
+    off = build(EXAMPLES / "cube.stl", "stacked", params)
+    assert not [s for sl in off["slices"] for pc in sl["pieces"] for s, _ in pc["lines"] if s == "orient"]
+    font = on["params"]["font"]
+    for sl in on["slices"]:
+        for pc in sl["pieces"]:
+            geom = MultiPolygon([Polygon(r[0], r[1:]) for r in pc["placed"]])
+            arrows = [LineString(pts) for s, pts in pc["lines"] if s == "orient"]
+            assert len(arrows) == 4, sl["label"]                      # two arrows: a shaft and a head each
+            for a in arrows:
+                assert geom.buffer(-0.3).covers(a)
+                assert all(not a.intersects(mark_box(x, y, t, font, rot)) for x, y, t, rot in pc["marks"])

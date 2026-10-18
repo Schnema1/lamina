@@ -275,11 +275,16 @@ def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, place):
     if len(prepared) <= MANY and len(sheets) > 1:
         # the polygon nest fills bottom-left and lets a round part drop into the valley between two below it, which
         # can cost a whole column (seven rings: five and two, where three and three would do); the plain rectangle
-        # packing is tried as well and kept when it takes fewer sheets. Each nest writes every piece's placement, so
-        # the polygon one is put back when it stays: labels are placed against the outlines the pieces really have
+        # packing is tried as well and kept when it takes fewer sheets, or as many with less on its emptiest one
+        # (seven rings: five and two, where six and one would do — the first sheet full, the last for the rest). The
+        # parts' own areas are compared: the polygon nest keeps grown outlines, and a part too big for the sheet
+        # takes a sheet of its own in a different place in each nest's order. Each nest writes every piece's
+        # placement, so the polygon one is put back when it stays: labels are placed against the outlines the
+        # pieces really have
         kept = [(pc.place, pc.placed, pc.placed_lines, pc.placed_marks) for pc, _ in prepared]
         rect = _rect_nest(prepared, sheet, gap, margin)
-        if len(rect) < len(sheets):
+        least = lambda ss: min(sum(pc.kerfed.area for pc in sh.pieces) for sh in ss)
+        if len(rect) < len(sheets) or (len(rect) == len(sheets) and least(rect) < least(sheets)):
             sheets = rect
         else:
             for (pc, _), was in zip(prepared, kept):

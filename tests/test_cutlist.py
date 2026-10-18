@@ -167,3 +167,14 @@ def test_split_tabs_interlock_on_a_plain_bar():
     ha = as_multi(a.intersection(box(150.02, -big, big, big))); hb = as_multi(b.intersection(box(-big, -big, 149.98, big)))
     assert len(ha.geoms) >= 2 and len(hb.geoms) >= 2                  # tabs on both sides
     assert a.intersection(b).area < 1e-6 and abs(a.area + b.area - profile.area) < 1e-6
+
+
+def test_a_split_never_leaves_a_loose_piece():
+    """The tall bar, interlocked and too tall for the sheet, is split into strips; the cut used to be free to fall
+    where the other family's slots end, and the lower half came apart into three pieces, one a small triangle held by
+    nothing. Every strip of every slice is one region, and nothing is reported loose."""
+    plan = build(EXAMPLES / "tall_bar.stl", "interlocked", {"thickness": 3, "nx": 5, "ny": 4, "autofix": "off"})
+    pieces = [(sl["label"], pc) for sl in plan["slices"] for pc in sl["pieces"]]
+    assert len(pieces) > len(plan["slices"])                            # something was split
+    assert [lab for lab, pc in pieces if len(pc["kerfed"]) != 1] == []
+    assert not [e for sl in plan["slices"] for e in sl["errors"]]

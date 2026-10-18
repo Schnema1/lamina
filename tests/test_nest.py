@@ -267,3 +267,17 @@ def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mo
             lead = LineString(pc["leader"])
             assert all(lead.disjoint(g) for o, g in parts.items() if o != lab), lab
             assert parts[lab].distance(lead) < 1e-3                             # it points at its own part
+
+
+def test_seven_rings_fill_the_first_sheet_before_the_second():
+    """Seven 180 mm rings on 600 × 400: the polygon nest drops the second row into the valleys of the first and fits
+    five, the plain rectangle packing six. Same sheet count either way, so the one that leaves less for the last
+    sheet is kept — the first sheet full, the second with the rest (the tube example had five, two and one)."""
+    from types import SimpleNamespace
+    from shapely.geometry import Point
+    from core.geometry import as_multi
+    from core.model import Piece
+    stock = SimpleNamespace(thickness=3)
+    rings = [Piece(f"Z-{i + 1}", as_multi(Point(0, 0).buffer(90).difference(Point(0, 0).buffer(80))), stock) for i in range(7)]
+    assert nest.nest(rings, (600, 400), gap=3, margin=5) == 2
+    assert sorted(pc.place[0] for pc in rings) == [0] * 6 + [1]
