@@ -20,10 +20,10 @@ import shapely
 from shapely import affinity
 from scipy.ndimage import binary_erosion, distance_transform_edt
 from shapely.geometry import LineString, Point, box
-from shapely.ops import split
+from shapely.ops import nearest_points, split
 from shapely.geometry.polygon import orient
 from shapely.strtree import STRtree
-from .geometry import as_multi, inside_spot, label_box, min_rect_angle
+from .geometry import as_multi, fit_on_part, label_angles, label_box, label_rect, mark_box, min_rect_angle, widest_spot
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -235,7 +235,7 @@ def _rect_nest(prepared, sheet, gap, margin):
     return [sheets[k] for k in sorted(sheets)]
 
 
-def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", label_inside=False):
+def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", place="part"):
     """Sets piece.place, .kerfed, .placed(+lines, marks), .label_pos, .leader. Returns sheet count.
 
     One sheet is one stock thickness. A part whose thickness was changed is cut from another piece of material, so
@@ -244,18 +244,18 @@ def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", l
     for pc in pieces:
         by_thick.setdefault(round(pc.parent.thickness, 6), []).append(pc)
     if len(by_thick) < 2:
-        return _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside)
+        return _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, place)
     n = 0
     for t in sorted(by_thick):
         group = by_thick[t]
-        used = _nest(group, sheet, gap, margin, kerf, labels, font, tag, label_inside)
+        used = _nest(group, sheet, gap, margin, kerf, labels, font, tag, place)
         for pc in group:
             pc.place = (pc.place[0] + n, *pc.place[1:])      # each group numbered after the ones before it
         n += used
     return n
 
 
-def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside):
+def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, place):
     k = kerf / 2
     prepared = []
     for pc in pieces:
@@ -264,7 +264,7 @@ def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside):
     sheets = _rect_nest(prepared, sheet, gap, margin) if len(prepared) > MANY else _poly_nest(prepared, sheet, gap, margin)
     if labels:
         for sh in sheets:
-            place_labels(sh, font, tag, label_inside)
+            place_labels(sh, font, tag, place)
     return max(1, len(sheets))
 
 
@@ -323,42 +323,77 @@ def _poly_nest(prepared, sheet, gap, margin):
     return sheets
 
 
-def place_labels(sh, font, tag="", inside=False):
-    """Every part's label, either beside the part in free space with a leader to its outline, or — `inside` — engraved
-    on the part itself. A label placed inside sits within the next layer's outline where the piece carries one (the
-    stacked "engrave next layer" guide), so the layer glued on top hides it; a label too big for a small part is still
-    placed, on the part's widest spot and past its outline if it must, for the maker to trim in the laser software —
-    the one thing that never happens is a part coming out with no label at all."""
+def place_labels(sh, font, tag="", place="part"):
+    """Every part's label. `place` = "part": on the part itself where the whole label fits on its material — inside
+    the next layer's outline where the piece carries one (the stacked "engrave next layer" guide), so the layer glued
+    on top hides it, upright or turned along the part — else beside the part in free space, with a leader line to its
+    outline; "beside": always beside; "on": always on the part, on its widest spot and past its outline if it must,
+    for the maker to trim in the laser software. Free space is space inside the sheet margin that no part (at the
+    nesting gap), no earlier label and no leader line crosses, searched outward from the part's outline, above it
+    first. A part with none within reach keeps its label on its widest spot and is counted (`crowded`) so the plan
+    can say so — the one thing that never happens is a part coming out with no label at all."""
     text = lambda pc: f"{tag} {pc.label}" if tag else pc.label        # `tag`: the model name engraved first
-    if inside:
-        for pc in sh.pieces:                                        # engraved on the part: no leader line to it
-            pc.label_pos = inside_spot(pc.placed, [ln for s, ln in pc.placed_lines if s == "guide"], *label_box(text(pc), font))
-            pc.leader = None
-        return
+    for g in sh.placed:
+        shapely.prepare(g)
     tree = STRtree(sh.placed)
     taken = []
-    for pc in sh.pieces:
+    for k, pc in enumerate(sh.pieces):
         w, h = label_box(text(pc), font)
-        x0, y0, x1, y1 = pc.placed.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        spots = []
-        for d in (1.0, 4.0, 8.0, 14.0, 22.0):
-            spots += [(cx, y1 + d + h / 2, 0), (x1 + d + w / 2, cy, 0), (cx, y0 - d - h / 2, 0), (x0 - d - w / 2, cy, 0),
-                      (x1 + d + h / 2, cy, 90), (x0 - d - h / 2, cy, 90)]
-        chosen = None
-        for lx, ly, rot in spots:
-            bw, bh = (w, h) if rot == 0 else (h, w)
-            rect = box(lx - bw / 2, ly - bh / 2, lx + bw / 2, ly + bh / 2)
-            if rect.bounds[0] < 0 or rect.bounds[1] < 0 or rect.bounds[2] > sh.W or rect.bounds[3] > sh.H:
+        spot = None
+        if place != "beside":
+            spot = fit_on_part(pc.placed, [ln for s, ln in pc.placed_lines if s == "guide"], w, h,
+                               [affinity.rotate(mark_box(x, y, t, font), pc.place[3], origin=(x, y)) for x, y, t in pc.placed_marks], label_angles(pc.placed))
+        if spot is None and place == "on":
+            spot = widest_spot(pc.placed)
+        if spot is None:
+            found = _beside(k, pc, w, h, sh, tree, taken)
+            if found:
+                pc.label_pos, pc.leader, rect = found
+                pc.crowded = False; taken.append(rect)
                 continue
-            if any(rect.intersects(sh.placed[i]) for i in tree.query(rect)) or any(rect.intersects(t) for t in taken):
+            spot = widest_spot(pc.placed)
+            pc.crowded = True
+        else:
+            pc.crowded = False
+        pc.label_pos, pc.leader = spot, None
+        taken.append(label_rect(*spot, w, h))
+
+
+def _beside(k, pc, w, h, sh, tree, taken):
+    """A free spot for a w × h label beside part k: ((x, y, rot), leader, rect) or None. Candidates lie on rings round
+    the part's nested outline at growing distances, above the part first, the label upright or on its side, its near
+    edge on the ring; a candidate is free when its box lies inside the sheet margin and touches no part, no label
+    placed before it, and the leader from it to the part's own outline crosses no other part."""
+    part = sh.placed[k].simplify(0.5)
+    W, H, m = sh.W, sh.H, sh.margin
+    x0, y0, x1, y1 = pc.placed.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    for d in (1.0, 3.0, 6.0, 10.0, 15.0, 22.0, 32.0, 45.0, 60.0):
+        pts = []
+        for ring in (g.exterior for g in as_multi(part.buffer(d, join_style=1)).geoms):
+            n = max(12, int(ring.length / max(4.0, h / 2)))
+            pts += [ring.interpolate(i / n, normalized=True) for i in range(n)]
+        pts.sort(key=lambda q: abs((math.degrees(math.atan2(q.y - cy, q.x - cx)) - 90 + 180) % 360 - 180))   # above first, below last
+        for p in pts:
+            q = nearest_points(pc.placed, p)[0]                                   # where the leader lands: the part's own outline
+            nx, ny = p.x - q.x, p.y - q.y; L = math.hypot(nx, ny)
+            if L < 1e-6:
                 continue
-            chosen = (lx, ly, rot, rect); break
-        if chosen is None:                                          # crowded: inside the part, at its representative point
-            c = pc.placed.representative_point(); chosen = (c.x, c.y, 0, box(c.x - w / 2, c.y - h / 2, c.x + w / 2, c.y + h / 2))
-        lx, ly, rot, rect = chosen
-        taken.append(rect)
-        anchor = Point(lx, ly)
-        near = min((p.exterior for p in pc.placed.geoms), key=lambda r: r.distance(anchor))
-        q = near.interpolate(near.project(anchor))
-        pc.label_pos = (lx, ly, rot)
-        pc.leader = ((lx, ly), (q.x, q.y))
+            nx, ny = nx / L, ny / L
+            for rot in (0, 90):
+                bw, bh = (w, h) if rot == 0 else (h, w)
+                reach = abs(nx) * bw / 2 + abs(ny) * bh / 2                     # the box's near edge sits on the ring
+                lx, ly = p.x + nx * reach, p.y + ny * reach
+                rect = box(lx - bw / 2, ly - bh / 2, lx + bw / 2, ly + bh / 2)
+                rx0, ry0, rx1, ry1 = rect.bounds
+                if rx0 < m or ry0 < m or rx1 > W - m or ry1 > H - m:
+                    continue
+                if any(sh.placed[i].intersects(rect) for i in tree.query(rect)) or any(rect.intersects(t) for t in taken):
+                    continue
+                line = LineString([(lx, ly), (q.x, q.y)])
+                if any(i != k and sh.placed[i].intersects(line) for i in tree.query(line)):
+                    continue
+                start = rect.exterior.intersection(line)                           # the leader leaves the label at its edge
+                start = start.geoms[0] if start.geom_type.startswith("Multi") else start
+                sx, sy = start.coords[0] if not start.is_empty else (lx, ly)
+                return (lx, ly, rot), ((sx, sy), (q.x, q.y)), rect
+    return None

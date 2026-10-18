@@ -144,54 +144,87 @@ def label_box(text, font):
     return max(6.0, width(text, font) + 2), font * 1.4
 
 
-def label_spot(mp, w, h, prefer=None):
-    """Where to put a w × h label on a part: the centre of a block that lies inside `prefer` (when given) or `mp` —
-    tried upright and turned 90° — or, when no whole block fits, the widest spot there is, so a label is never left
-    off. Returns (x, y, rotation in degrees)."""
-    mp = as_multi(mp)
-    if mp.is_empty:
-        return (0.0, 0.0, 0)
-    for cand in (prefer, mp):
-        if cand is None or cand.is_empty:
-            continue
-        spot = _fits_block(cand, w, h)
-        if spot:
-            return spot
-    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in mp.geoms), key=lambda c: c.length)
-    return (float(best.coords[0][0]), float(best.coords[0][1]), 0)
+def mark_box(x, y, text, font):
+    """The room a small engraved mark (a seam or dowel number, at 0.6 of the font) takes, centred on (x, y)."""
+    from .font import width
+    s = font * 0.6
+    return box(x - (width(text, s) + 0.6) / 2, y - s * 0.7, x + (width(text, s) + 0.6) / 2, y + s * 0.7)
 
 
-def inside_spot(region, guides, w, h):
-    """Where to engrave a w × h label on a part: inside the next layer's outline when the part carries one (`guides`,
-    the stacked guide lines, in `region`'s frame), so the layer glued on top hides it, otherwise on the part's own
-    widest spot. The next layer's footprint is rebuilt from the guide lines — the ring they enclose — and only used if
-    the label fits inside it. A label that fits nowhere is still given the part's widest clearance rather than left
-    off, so the maker trims it in the laser software instead of finding a part they cannot place. The sheet placement
-    and the per-piece export both come through here, so a part's label lands in the same place in both."""
+def label_rect(x, y, rot, w, h):
+    """A w × h label's box, centred on (x, y) and turned `rot` degrees, as the sheet carries it."""
+    return shapely.affinity.rotate(box(x - w / 2, y - h / 2, x + w / 2, y + h / 2), rot, origin=(x, y))
+
+
+def fit_block(region, w, h, angles=(0, 90)):
+    """Centre and turn of a w × h block lying wholly inside `region` (holes respected), or None. For each turn the
+    region is laid flat along it and eroded by the block — the region overlapped with itself moved by each corner and
+    each edge middle of the block, a quick stand-in for the exact erosion — and the roomiest spot of what is left
+    (the centre of its largest inscribed circle) is checked exactly."""
     region = as_multi(region)
-    cover = None
-    if guides:
-        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
-        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
-        # not covered, so a label there would show through
-        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
-        if loops:
-            under = shapely.union_all(loops).intersection(region)
-            if not under.is_empty:
-                cover = under
-    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part
-
-
-def _fits_block(mp, w, h):
-    """Centre and rotation of a w × h block lying inside `mp`, or None. The largest inscribed circle's centre is where
-    a block has the most clearance, so it is tried first; holes are respected, since `covers` sees them."""
-    for g in sorted(as_multi(mp).geoms, key=lambda p: -p.area):
-        px, py = shapely.maximum_inscribed_circle(g, 0.5).coords[0]
-        for rot in (0, 90):
-            bw, bh = (w, h) if rot == 0 else (h, w)
-            if g.covers(box(px - bw / 2, py - bh / 2, px + bw / 2, py + bh / 2)):
-                return (float(px), float(py), rot)
+    if region.is_empty:
+        return None
+    for ang in angles:
+        R = shapely.affinity.rotate(region, -ang, origin=(0, 0)) if ang else region
+        E = R
+        for dx, dy in ((w / 2, h / 2), (-w / 2, h / 2), (w / 2, -h / 2), (-w / 2, -h / 2), (w / 2, 0), (-w / 2, 0), (0, h / 2), (0, -h / 2)):
+            E = E.intersection(shapely.affinity.translate(R, dx, dy))
+            if E.is_empty:
+                break
+        for piece in sorted(as_multi(E).geoms, key=lambda q: -q.area):
+            for cx, cy in (shapely.maximum_inscribed_circle(piece, 0.5).coords[0], piece.representative_point().coords[0]):
+                if R.covers(box(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)):
+                    x, y = shapely.affinity.rotate(Point(cx, cy), ang, origin=(0, 0)).coords[0] if ang else (cx, cy)
+                    return (float(x), float(y), float(ang))
     return None
+
+
+def covered(region, guides):
+    """The part of `region` the next layer covers, rebuilt from the guide lines (the stacked "engrave next layer"
+    outline): the rings they enclose, less a ring inside a ring, which is the layer above's hole — its inner edge is
+    engraved too, and a label under it would show through. None when the part carries no guide."""
+    if not guides:
+        return None
+    loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
+    loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
+    if not loops:
+        return None
+    under = shapely.union_all(loops).intersection(region)
+    return None if under.is_empty else under
+
+
+def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90)):
+    """Where a w × h label fits whole on a part's material: inside the next layer's outline when the part carries one
+    (`guides`), so the layer glued on top hides it, else anywhere on the part — clear of its holes and of the marks
+    (boxes) already engraved on it — at the first of `angles` that holds it. None when it fits nowhere."""
+    region = as_multi(region)
+    if marks:
+        region = as_multi(region.difference(unary_union([m.buffer(0.5) for m in marks])))
+    for cand in (covered(region, guides), region):
+        if cand is not None and not cand.is_empty:
+            spot = fit_block(cand, w, h, angles)
+            if spot:
+                return spot
+    return None
+
+
+def widest_spot(region):
+    """The spot on a part with the most clearance all round — the centre of its largest inscribed circle: where a
+    label that fits nowhere whole is still put, overrunning the outline, for the maker to trim rather than left off."""
+    region = as_multi(region)
+    if region.is_empty:
+        return (0.0, 0.0, 0.0)
+    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in region.geoms), key=lambda c: c.length)
+    return (float(best.coords[0][0]), float(best.coords[0][1]), 0.0)
+
+
+def label_angles(region):
+    """The turns to try a label on a part at: upright, a quarter turn, and along the part's long side and across it
+    when that side is not already square to the sheet."""
+    long = -min_rect_angle(region) % 180
+    if long > 90:
+        long -= 180                                           # never upside down
+    return (0, 90) if min(abs(long) % 90, 90 - abs(long) % 90) < 5 else (0, 90, round(long, 1), round(long + 90 if long < 0 else long - 90, 1))
 
 
 def line_segments_in_mesh(mesh, p0, d, span) -> list[tuple[float, float]]:

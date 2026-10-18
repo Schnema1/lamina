@@ -34,9 +34,10 @@ def label_codes(labels, seed: str) -> dict:
 
 @dataclass
 class Slice:
-    label: str                 # Slicer-style "Axis-Index" e.g. "X-3", "Z-6", "R-2a", "C-4", "P-12" (panel), "S-7" (strip)
+    label: str                 # Slicer-style "Axis-Index" e.g. "X-3", "Z-6", "R-2a", "C-4", "P-12" (panel), "S-7" (strip),
+                               # "Z-3a" (the peg or spacer a between Z-3 and Z-4: a connector is named after its lower slice)
     group: str                 # "S" stacked, "X"/"Y" interlocked families, "R" radial half-slice, "C" core disc,
-                               # "F" folded panel, "J" joint part (strip / rib), "P" alignment peg
+                               # "F" folded panel, "J" joint part (strip / rib), "P" alignment peg / spacer
     M: np.ndarray              # 4x4 local->world; slice lies on local z=0, local x/y are the drawing axes
     thickness: float
     clip: MultiPolygon | None = None    # local region to keep (radial half-plane, core disc)
@@ -57,6 +58,7 @@ class Slice:
     # what a technique keeps on its own slices while it builds them
     pair: int = 0                       # stacked peg / spacer: the pair of layers it sits between (assembly order)
     cutkeys: dict = field(default_factory=dict)   # stacked: (x, y, angle) → the cut there, so an aligned dowel is cut once
+    cutnames: dict = field(default_factory=dict)  # stacked: the same key → its dowel's name (Z-3a), so a rod carried up keeps its name
     inner: MultiPolygon | None = None   # stacked: raw eroded by min_feature, where a cut keeps a full wall (cached)
     dowel_room: list = field(default_factory=list)  # stacked: where a rod through this slice and a neighbour can go (checks)
     radial: np.ndarray | None = None    # radial half-slice: the way it points out from the axis
@@ -86,6 +88,7 @@ class Piece:
     placed_marks: list = field(default_factory=list)
     label_pos: tuple | None = None          # (x, y, rotation) of the label text on the sheet
     leader: tuple | None = None             # ((x0, y0), (x1, y1)) label → part
+    crowded: bool = False                   # the label sits on the part only because no free spot beside it was found
     same: list = field(default_factory=list)     # labels of the pieces cut from this same outline (mark_identical)
     flipped: list = field(default_factory=list)  # … and of those that are its mirror image: same file, turned over
 

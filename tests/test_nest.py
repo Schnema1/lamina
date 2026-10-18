@@ -206,24 +206,61 @@ def test_one_sheet_is_as_long_as_the_parts_and_their_labels():
 
 
 def test_labels_inside_sit_on_their_part_and_a_lone_part_file_grows_to_hold_one(tmp_path):
-    """`label_inside`: every label is engraved on its own part — its centre inside the part's placed outline, with no
-    leader line — while the default still puts it beside the part with a leader. In the one-file-per-part export a
+    """`label_place` = on: every label is engraved on its own part — its centre inside the part's placed outline, with no
+    leader line — while `beside` puts every one beside the part with a leader. In the one-file-per-part export a
     label wider than the part (a 60 mm font on the cube's 180 mm slab) is drawn whole: the drawing grows past the part."""
     import re
     from shapely.geometry import Point
     from core.export import export
     base = {"distribution": "count", "count": 3, "autofix": "off"}
-    plan = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_inside": True})
+    plan = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_place": "on"})
     pieces = [pc for sl in plan["slices"] for pc in sl["pieces"]]
     for pc in pieces:
         x, y, _ = pc["label_pos"]
         assert Polygon(pc["placed"][0][0], pc["placed"][0][1:]).covers(Point(x, y)), pc["label"]
         assert pc["leader"] is None
-    beside = build(EXAMPLES / "cube.stl", "stacked", base)
+    beside = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_place": "beside"})
     assert all(pc["leader"] for sl in beside["slices"] for pc in sl["pieces"])
 
     x0, _, x1, _ = Polygon(pieces[0]["placed"][0][0]).bounds
     plan["params"]["font"] = 60.0                                     # "cube Z-1" at 60 mm: about 300 mm of label on a 180 mm slab
     files = [f for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True) if " Z-1 " in f.name]
-    width = float(re.search(r'viewBox="0 0 ([\d.]+) ', files[0].read_text(encoding="utf-8")).group(1))
-    assert width > 1.5 * (x1 - x0), width                             # the page is wider than the slab: the label is all on it
+    width, height = map(float, re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', files[0].read_text(encoding="utf-8")).groups())
+    assert max(width, height) > 1.5 * (x1 - x0), (width, height)    # the page outgrows the slab the way the label runs: it is all on it
+
+
+@pytest.mark.parametrize("model, mode, params", [
+    ("egg", "radial", {"count": 8, "ring_count": 5}),                                   # rings and half-slices: labels on the big ones, beside the slim ones
+    ("torus", "interlocked", {"nx": 9, "ny": 7}),                                        # slotted rings: most labels beside
+    ("cube", "stacked", {"distribution": "count", "count": 6, "placement": "random"}),   # slabs with dowel marks: labels on the parts, clear of the marks
+])
+def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mode, params):
+    """The default placement: a label is engraved on its own part when the whole of it fits on the material, clear of
+    the holes and the marks there; otherwise it goes beside the part, inside the sheet margin, touching no part and no
+    other label, with a leader line that crosses no other part. Nothing here was short of room (no crowded note)."""
+    import shapely
+    from shapely import affinity
+    from shapely.geometry import LineString
+    from core.geometry import label_box, label_rect, mark_box
+    plan = build(EXAMPLES / f"{model}.stl", mode, {**params, "autofix": "off"})
+    assert not [n for n in plan["notes"] if "no free spot" in n], plan["notes"]
+    font, tag, m = plan["params"]["font"], plan["label_tag"], plan["params"]["sheet_margin"]
+    W, H = plan["sheet"]
+    pieces = [pc for sl in plan["slices"] for pc in sl["pieces"]]
+    for si in range(plan["sheets"]):
+        on = [pc for pc in pieces if pc["place"][0] == si]
+        parts = {pc["label"]: shapely.union_all([Polygon(r[0], r[1:]) for r in pc["placed"]]) for pc in on}
+        rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{tag} {pc['label']}".strip(), font)) for pc in on}
+        for pc in on:
+            lab, r = pc["label"], rects[pc["label"]]
+            if pc["leader"] is None:                                            # on the part: whole, and off its marks
+                assert parts[lab].buffer(0.01).covers(r), lab
+                assert all(r.disjoint(affinity.rotate(mark_box(x, y, t, font), pc["place"][3], origin=(x, y))) for x, y, t in pc["marks"]), lab
+                continue
+            x0, y0, x1, y1 = r.bounds
+            assert x0 >= m - 1e-6 and y0 >= m - 1e-6 and x1 <= W - m + 1e-6 and y1 <= H - m + 1e-6, (lab, r.bounds)
+            assert all(r.disjoint(g) for g in parts.values()), lab
+            assert all(r.disjoint(rects[o]) for o in rects if o != lab), lab
+            lead = LineString(pc["leader"])
+            assert all(lead.disjoint(g) for o, g in parts.items() if o != lab), lab
+            assert parts[lab].distance(lead) < 1e-3                             # it points at its own part

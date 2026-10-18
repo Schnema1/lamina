@@ -430,3 +430,34 @@ def test_autofix_adds_interlocked_slices_a_full_wall_from_the_others(model):
             gaps = [abs(q - x) for q in d if abs(q - x) > 1e-3]
             assert min(gaps) >= need - 0.05, f"{fam} slice added at {x} mm, {min(gaps):.1f} mm from another"
     assert added, "this model needs auto-fix's slices; the test means nothing without them"
+
+
+def test_connectors_are_named_after_their_lower_slice_and_marked_beside_their_holes():
+    """A dowel is Z-3a: the lower of the two slices it joins and a letter, marked 3a beside its hole on both slices,
+    so every hole on a slice says which rod it takes — a number below the slice's own, the rod from below; its own
+    number, the rod going up. A straight rod through several slices keeps the name of the slice it starts from; with
+    tab connectors the peg is the connector and carries the name as its part label. The assembly key lists every
+    rod with its two ends."""
+    from core.export import key_text
+    plan = build(EXAMPLES / "egg.stl", "stacked", {"distribution": "count", "count": 5, "placement": "random", "n_points": 2, "autofix": "off"})
+    assert [r[5] for r in plan["rods"]] == ["Z-1a", "Z-1b", "Z-2a", "Z-2b", "Z-3a", "Z-3b", "Z-4a", "Z-4b"]
+    by = {sl["label"]: sl for sl in plan["slices"]}
+    marks = lambda sl: [m[2] for pc in sl["pieces"] for m in pc["marks"]]
+    for _, _, _, _, _, name, lo, hi in plan["rods"]:
+        assert all(name.split("-", 1)[1] in marks(by[s]) for s in (lo, hi)), name
+    for sl in plan["slices"]:                                                      # every hole marked, once
+        holes = sum(len(region) - 1 for pc in sl["pieces"] for region in pc["placed"])
+        assert holes == len(marks(sl)) == len(set(marks(sl))), (sl["label"], marks(sl))
+    assert marks(by["Z-3"]) == ["2a", "2b", "3a", "3b"]
+    key = key_text(plan)
+    assert "Z-3a      Z-3       Z-4" in key and "Dowels" in key
+
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 4, "autofix": "off"})   # aligned: two rods, the whole stack
+    assert {r[5] for r in plan["rods"]} == {"Z-1a", "Z-1b"}
+    assert all(marks(sl) == ["1a", "1b"] for sl in plan["slices"])
+    assert "Z-1a      Z-1       Z-4" in key_text(plan)
+
+    plan = build(EXAMPLES / "egg.stl", "stacked", {"distribution": "count", "count": 4, "connect": "tab", "space": 4, "dowel_d": 6, "autofix": "off"})
+    pegs = [sl["label"] for sl in plan["slices"] if sl["group"] == "P"]
+    assert pegs[:2] == ["Z-1a", "Z-1b"] and all(sl["label"].startswith("Z-") for sl in plan["slices"])
+    assert marks(next(sl for sl in plan["slices"] if sl["label"] == "Z-1")) == ["1a", "1b"]

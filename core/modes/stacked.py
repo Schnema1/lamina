@@ -7,8 +7,9 @@ import shapely.affinity
 from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
 from . import Mode, Param, register
+from ..model import ABC
 from ..model import Slice
-from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
+from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, mark_box, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
 
 _dist = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])   # noqa: E731
 
@@ -18,6 +19,28 @@ CONNECT_HELP = ("dowel = round/square rods through holes (drawn in the 3D view),
                 "orientation · none = glue only, for a stack you are happy to line up by eye")
 
 MIN_DOWEL = 2.0            # below this a dowel is not worth cutting for: too small to buy, too weak to locate anything
+ABC_LOWER = ABC.lower()    # the letters of connector names, no i or o (they read as 1 and 0 when engraved small)
+
+
+def hole_mark(sl, hole, text, font):
+    """The dowel's mark engraved beside its hole (or a tab's slot): a box of `text` at 0.6 of the font, in the first of
+    eight directions round the hole — above first — where the whole mark lies on the slice's material, clear of the
+    outline, every cut in the slice and every mark already there. A hole with no room round it (a small island) gets
+    none: the assembly key still names it."""
+    w, h = (lambda b: (b[2] - b[0], b[3] - b[1]))(mark_box(0, 0, text, font).bounds)
+    cx, cy = hole.centroid.coords[0]
+    reach = max(math.hypot(x - cx, y - cy) for x, y in hole.exterior.coords)
+    room = sl.raw.buffer(-0.3)
+    cuts = [c.buffer(0.3) for c in sl.cuts]
+    taken = [mark_box(mx, my, t, font) for mx, my, t in sl.marks]
+    for ang in (90, 270, 0, 180, 45, 135, 225, 315):
+        dx, dy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+        far = reach + 0.6 + abs(dx) * w / 2 + abs(dy) * h / 2         # the box's edge nearest the hole 0.6 mm from it
+        x, y = cx + dx * far, cy + dy * far
+        b = mark_box(x, y, text, font)
+        if room.covers(b) and all(b.disjoint(c) for c in cuts) and all(b.disjoint(m) for m in taken):
+            sl.marks.append((x, y, text))
+            return
 
 
 @register
@@ -50,7 +73,10 @@ class Stacked(Mode):
     hidden_common = ("notch_ratio", "notch_factor", "notch_angle")
 
     legend = ("Z-3 = the 3rd slice along the stacking axis, counted from the low end (X- or Y- when you stack along those) · "
-              "P-n = an alignment peg or a spacer, which goes between two slices")
+              "Z-3a = dowel a between Z-3 and Z-4 — a connector is named after the lower of the two slices it joins and a letter, "
+              "and the mark 3a is engraved beside its hole on both slices, so a hole marked with a number lower than the slice's "
+              "own takes the rod from below, one with its own number the rod going up · a straight rod through several slices "
+              "keeps the name of the slice it starts from · with tab connectors Z-3a is the peg or spacer itself, a part of its own")
 
     def build(self, ctx):
         p = ctx.p
@@ -342,11 +368,13 @@ class Stacked(Mode):
                 return not tab
             if sl.inner is None:
                 sl.inner = sl.raw.buffer(-mf)
-            return sl.inner.contains(g) and all(g.distance(c) >= mf for c in sl.cutkeys.values())
+            return (sl.inner.contains(g) and all(g.distance(c) >= mf for c in sl.cutkeys.values())
+                    and all(g.distance(mark_box(x, y, t, p["font"])) >= 0.3 for x, y, t in sl.marks))   # nor through a mark already engraved
 
-        def add_cut(sl, geom, key, other, pt):   # a slice touches two pairs: the same aligned point is cut once
+        def add_cut(sl, geom, key, other, pt, name):   # a slice touches two pairs: the same aligned point is cut once
             if key not in sl.cutkeys:
-                sl.cutkeys[key] = geom; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
+                sl.cutkeys[key] = geom; sl.cutnames[key] = name; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
+                hole_mark(sl, geom, name.split("-", 1)[1], p["font"])      # Z-3a is marked 3a: every slice of a stack shares the axis
             sl.links.append((other, geom, pt))
 
         def place(a, b, i, j, x, y):
@@ -376,10 +404,16 @@ class Stacked(Mode):
                 return None
             spacing = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2]))
             pt = tuple((a.M @ np.array([xa, ya, spacing / 2, 1]))[:3])           # world point in the gap: the connection's identity
-            add_cut(a, ga, ka, b.label, pt); add_cut(b, gb, kb, a.label, pt)
+            # the connector's name: the lower slice's and a letter (Z-3a, Z-3b …), or the name the hole in `a` already
+            # has when a straight rod from the pair below carries on through this one
+            name = a.cutnames.get(ka)
+            if name is None:
+                n = named.get(i, 0); named[i] = n + 1
+                name = f"{a.label}{ABC_LOWER[n % 26] * (n // 26 + 1)}"
+            add_cut(a, ga, ka, b.label, pt, name); add_cut(b, gb, kb, a.label, pt, name)
             if not tab:
                 ctx.rods.append([list((a.M @ np.array([xa, ya, -t / 2, 1]))[:3]), list((a.M @ np.array([xa, ya, spacing + t / 2, 1]))[:3]), d,
-                                 rod, list(a.M[:3, 0])])
+                                 rod, list(a.M[:3, 0]), name, a.label, b.label])
                 return xa, ya
             # one flat piece across the gap: a peg when space = 0, a spacer (body + a tab each end) otherwise
             k += 1
@@ -387,13 +421,13 @@ class Stacked(Mode):
             L = spacing + t                                                     # from the far side of a to the far side of b
             body = Polygon([(-d / 2, -gap / 2), (d / 2, -gap / 2), (d / 2, gap / 2), (-d / 2, gap / 2)]) if gap > 0 else None
             tabs = Polygon([(-tab_w / 2, -L / 2), (tab_w / 2, -L / 2), (tab_w / 2, L / 2), (-tab_w / 2, L / 2)])
-            sl = Slice(f"P-{k}", "P", M, t)
+            sl = Slice(name, "P", M, t)                                       # the peg is the connector: it carries its name
             sl.raw = as_multi(unary_union([body, tabs]) if body is not None else tabs)
             sl.pair = i
             extra.append(sl)
             return xa, ya
 
-        bare, rooms = 0, []
+        bare, rooms, named = 0, [], {}                                        # named: connectors so far per pair, for the letters
         want = max(1, p["n_points"])
         for i, (a, b) in enumerate(zip(slices, slices[1:])):
             # what slice a already carries, for every placement: an aligned point repeats exactly and is kept

@@ -11,14 +11,15 @@ Layers / colours follow Slicer's Cut Layout convention:
                             single-stroke font (core.font): open polylines the laser engraves in one pass, in every format
 """
 from __future__ import annotations
-import argparse, html, json, pathlib
+import argparse, html, json, math, pathlib
 import ezdxf
 import numpy as np
 import shapely
 from ezdxf import units as dxfunits
-from shapely.geometry import LineString, Polygon, box
+from shapely import affinity
+from shapely.geometry import MultiPolygon, Polygon, box
 from .font import strokes as glyphs
-from .geometry import as_multi, inside_spot, label_box, poly_coords
+from .geometry import as_multi, label_box, label_rect, poly_coords
 
 COLORS = {"OUTER": "#0055ff", "INNER": "#00aa00", "SCORE": "#d4a800", "GUIDE": "#ff8800", "LABEL": "#ff0000"}
 RGB = {k: tuple(int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)) for k, v in COLORS.items()}
@@ -43,6 +44,9 @@ class Item:
         self.leader = pc.get("leader")
         self.scores = pc.get("lines") or []
         self.marks = pc.get("marks") or []
+        # the marks turn with their part: on the sheet by its placement, so a dowel number stays beside its hole and a
+        # seam number on its seam however the part was nested; in the part's own frame (kerfed) not at all
+        self.rot = (pc.get("place") or [0, 0, 0, 0])[3] if rings_key == "placed" else 0.0
 
 
 def items_for_sheet(plan, si):
@@ -116,12 +120,24 @@ def identical_groups(plan):
             for sl in plan["slices"] for pc in sl["pieces"] if pc["label"] not in copies]
 
 
-def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=4.0):
+def label_on_part(pc):
+    """The sheet's label spot in the part's own frame, (x, y, rot), when the label is engraved on the part — the
+    placement undone: the part was turned `rot` about its origin and moved so its corner landed at `place`. None when
+    the label sits beside the part on the sheet (it has a leader line), which a lone part's file cannot show."""
+    if not pc.get("label_pos") or pc.get("leader"):
+        return None
+    _, px, py, rot = pc["place"]
+    bx, by, *_ = affinity.rotate(MultiPolygon([Polygon(r[0], r[1:]) for r in pc["kerfed"]]), rot, origin=(0, 0)).bounds
+    x, y, lrot = pc["label_pos"]
+    lx, ly = affinity.rotate(shapely.points([x - (px - bx), y - (py - by)]), -rot, origin=(0, 0)).coords[0]
+    return float(lx), float(ly), lrot - rot
+
+
+def item_for_piece(pc, note="", pad=1.0, names=None, tag="", font=4.0):
     """Piece alone at the origin (kerf applied, no sheet placement): its cuts, its fold or guide lines, its seam
-    numbers and its label.
-    With `inside`, the label is engraved on the part itself — where the sheet puts it: under the next layer's guide
-    when the part carries one, else at its widest spot — and the drawing is grown so a label too big for a small part
-    still comes out whole for the maker to trim."""
+    numbers and its label — on the part exactly where the sheet engraves it, or above the drawing when the sheet puts
+    it beside the part. The drawing is grown so a label overrunning a small part still comes out whole for the maker
+    to trim."""
     it = Item(pc, "kerfed", note, names, tag)
     xs = [x for _, r in it.rings for x, _ in r]; ys = [y for _, r in it.rings for _, y in r]
     x0, y0 = min(xs) - pad, min(ys) - pad
@@ -130,22 +146,20 @@ def item_for_piece(pc, note="", pad=1.0, names=None, tag="", inside=False, font=
     it.marks = [(x - x0, y - y0, t) for x, y, t in pc.get("kerfed_marks") or []]
     w, h = max(xs) - x0 + pad, max(ys) - y0 + pad
     it.leader = None
-    if not inside:
+    on = label_on_part(pc)
+    if on is None:
         it.label_pos = (w / 2, h + 3, 0)                 # above the part, as the single-part files always did
         return it, w, h + 6
-    lw, lh = label_box(it.label, font)
-    regs = [Polygon([(px - x0, py - y0) for px, py in r[0]], [[(px - x0, py - y0) for px, py in hole] for hole in r[1:]])
-            for r in pc["kerfed"]]
-    x, y, rot = inside_spot(shapely.union_all(regs), [LineString(pts) for s, pts in it.scores if s == "guide"], lw, lh)
-    bw, bh = (lw, lh) if rot == 0 else (lh, lw)
-    dx, dy = min(0.0, x - bw / 2 - 1), min(0.0, y - bh / 2 - 1)     # a label overrunning left/top moves the whole drawing
+    x, y, rot = on[0] - x0, on[1] - y0, on[2]
+    bx0, by0, bx1, by1 = label_rect(x, y, rot, *label_box(it.label, font)).bounds
+    dx, dy = min(0.0, bx0 - 1), min(0.0, by0 - 1)      # a label overrunning left/bottom moves the whole drawing
     if dx or dy:
         it.rings = [(l, [(qx - dx, qy - dy) for qx, qy in r]) for l, r in it.rings]
         it.scores = [(s, [(qx - dx, qy - dy) for qx, qy in pts]) for s, pts in it.scores]
         it.marks = [(mx - dx, my - dy, t) for mx, my, t in it.marks]
-        x -= dx; y -= dy; w -= dx; h -= dy
+        x -= dx; y -= dy; w -= dx; h -= dy; bx1 -= dx; by1 -= dy
     it.label_pos = (x, y, rot)
-    return it, max(w, x + bw / 2 + 1), max(h, y + bh / 2 + 1)       # grow the sheet of paper so nothing is clipped
+    return it, max(w, bx1 + 1), max(h, by1 + 1)         # grow the sheet of paper so nothing is clipped
 
 
 # The dash of each line style as (SVG dasharray in mm, PDF / PostScript dash in points, DXF linetype — its pattern is
@@ -170,13 +184,13 @@ def strokes(items):
 
 
 def texts(items, font):
-    """Every text to engrave, item by item, as (text, its strokes, leader): the marks (joint numbers, at 0.6 of the
-    font, never turned) then the label at `font`, turned as the sheet placed it, with the leader line from it to its
-    part. The strokes are the single-stroke font's polylines, centred on the text's spot, in sheet mm — the same
+    """Every text to engrave, item by item, as (text, its strokes, leader): the marks (joint and dowel numbers, at 0.6
+    of the font, turned with their part) then the label at `font`, turned as the sheet placed it, with the leader line
+    from it to its part. The strokes are the single-stroke font's polylines, centred on the text's spot, in sheet mm — the same
     lines in every format, so what the laser engraves never depends on a font the machine's software has."""
     for it in items:
         for x, y, t in it.marks:
-            yield str(t), glyphs(str(t), font * 0.6, x, y), None
+            yield str(t), glyphs(str(t), font * 0.6, x, y, it.rot), None
         if it.label_pos:
             x, y, rot = it.label_pos
             yield it.label, glyphs(it.label, font, x, y, rot), it.leader
@@ -224,8 +238,10 @@ def sheet_title(plan, si):
             f"{'plate' if p.get('printed') else 'sheet'} {si + 1}/{plan['sheets']}").strip(" ·")
 
 
-def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", title=""):
-    """y is flipped so the drawing reads like the plan (y up). Physical size via width/height units, viewBox in mm."""
+def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", title="", margin=5.0):
+    """y is flipped so the drawing reads like the plan (y up). Physical size via width/height units, viewBox in mm.
+    The title is engraved in the top margin, sized to fit the band nothing else uses, or left out when the margin
+    holds no legible text."""
     f = UNIT[units]
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
            f'<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{width * f:.4f}{units}" height="{height * f:.4f}{units}" viewBox="0 0 {width} {height}">']
@@ -249,8 +265,9 @@ def svg_doc(items, width, height, labels, border=False, font=4.0, units="mm", ti
         out.append(f'<g id="LABEL" fill="none" stroke="{COLORS["LABEL"]}" stroke-width="0.15" stroke-linecap="round" stroke-linejoin="round">')
         if border:
             out.append(f'<rect x="0" y="0" width="{width}" height="{height}"/>')
-        if title:
-            out.append(path(title, glyphs(title, font, font * 0.5, height - font * 1.2, anchor="start")))
+        size = min(font, margin * 0.6)
+        if title and size >= 1.5:
+            out.append(path(title, glyphs(title, size, size * 0.5, height - margin / 2, anchor="start")))
         if labels:
             for text, sts, leader in texts(items, font):
                 out.append(path(text, sts))
@@ -352,7 +369,7 @@ def eps_doc(items, w, h, labels, border, font):
 
 # ------------------------------------------------------------------ assembly key: the map that comes out of the cut
 GROUPS = {"S": "stacked slice", "X": "X slice", "Y": "Y slice", "R": "radial half-slice", "C": "ring slice",
-          "F": "folded panel", "J": "joint part", "P": "peg"}
+          "F": "folded panel", "J": "joint part", "P": "peg / spacer"}
 
 
 def key_text(plan):
@@ -367,8 +384,8 @@ def key_text(plan):
            "", "How the labels read"]
     out += ["  " + s.strip() for s in (plan.get("legend") or "").split(" · ") if s.strip()]
     out += ["  A part too big for the sheet is cut into pieces and the piece number comes last: Z-3-2 is the second piece of Z-3.",
-            "  Each label is engraved on its own part." if p.get("label_inside") else
-            "  Each label is engraved beside its own part on the sheet, with a line pointing at it."]
+            {"on": "  Each label is engraved on its own part.", "beside": "  Each label is engraved beside its own part on the sheet, with a line pointing at it."}
+            .get(p.get("label_place"), "  Each label is engraved on its own part where it fits, else beside it on the sheet with a line pointing at it.")]
     if codes:
         out += ["  Puzzle mode: what is engraved is the code in the first column below — it says nothing about where the part goes.",
                 "  This file is the only way back, so leave it out of the zip (the tickbox under Export) to keep the puzzle."]
@@ -383,6 +400,17 @@ def key_text(plan):
             step += 1
             out.append(f"{step:>4}  " + (f"{codes.get(pc['label'], '--'):<7}" if codes else "")
                        + f"{pc['label']:<12}{what:<20}{centre:<24}{onto[:60]}")
+    rods = {}
+    for r in plan.get("rods") or []:                  # a rod per pair of slices; a straight one through several keeps its name
+        if len(r) >= 8:
+            e = rods.setdefault(r[5], {"lo": r[6], "d": r[2], "pts": []}); e["hi"] = r[7]; e["pts"] += [r[0], r[1]]
+    if rods:
+        out += ["", "Dowels — named after the lower of the two slices each joins and a letter: Z-3a is dowel a between Z-3 and Z-4,",
+                "and the mark 3a is engraved beside its hole on both slices. Cut each rod to its length.", "",
+                f"{'dowel':<10}{'from':<10}{'to':<10}{'length':<12}diameter"]
+        for name, e in rods.items():
+            length = max(math.dist(a, b) for a in e["pts"] for b in e["pts"])   # the ends along one line: the two farthest apart
+            out.append(f"{name:<10}{e['lo']:<10}{e['hi']:<10}{length * f:<12.3g}{e['d'] * f:.3g} {u}")
     return "\n".join(out) + "\n"
 
 
@@ -391,7 +419,6 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
     out_dir = pathlib.Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     font = font or plan["params"].get("font", 4.0); units = units or plan["params"].get("units", "mm")
     names = plan.get("codes") or {}                 # puzzle mode: engraved codes instead of positions
-    inside = bool(plan["params"].get("label_inside"))   # labels engraved on the parts, not beside them
     design = design_name(plan)                      # before every file name: two designs' files never mix
     written = []
 
@@ -404,7 +431,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
     def write(stem, items, w, h, border_, fmts=fmts, title=""):
         for fmt in fmts:
             f = out_dir / f"{design} {stem}.{fmt}"
-            if fmt == "svg": f.write_text(svg_doc(items, w, h, labels, border_, font, units, title), encoding="utf-8")
+            if fmt == "svg": f.write_text(svg_doc(items, w, h, labels, border_, font, units, title, plan["params"].get("sheet_margin", 5.0)), encoding="utf-8")
             elif fmt == "dxf": dxf_doc(items, labels, (w, h) if border_ else None, font, units).saveas(f)
             elif fmt == "eps": f.write_text(eps_doc(items, w, h, labels, border_, font), encoding="latin-1", errors="replace")   # a label in another script: ? for its letters, not a failed export
             elif fmt == "pdf": pdf_doc(f, [(items, w, h)], labels, border_, font)
@@ -423,7 +450,7 @@ def export(plan, out_dir, fmts=("svg", "dxf"), labels=True, per_piece=False, bor
             stem = names.get(pc["label"], pc["label"]) + mat_tag(plan) + thick_tag(plan, t) + f" x{n}"
             # the drawing carries the count and how many of them are turned over; the cut list names which ones
             it, w, h = item_for_piece(pc, " ".join(x for x in ([f"×{n}"] if n > 1 else []) + [f"({len(flips)} turned over)" if flips else "", note] if x), names=names,
-                                      tag=plan.get("label_tag", ""), inside=inside, font=font)
+                                      tag=plan.get("label_tag", ""), font=font)
             write(stem, [it], w, h, False)
             also = "also " + ", ".join(names.get(l, l) for l in same[1:]) if n > 1 else note
             rows.append((f"{design} {stem}", n, size_of(it), "; ".join(x for x in [also, "turn over " + ", ".join(names.get(l, l) for l in flips) if flips else ""] if x)))

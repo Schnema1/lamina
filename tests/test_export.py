@@ -123,7 +123,7 @@ def test_a_lone_part_file_puts_the_label_under_the_next_layer_like_the_sheet(tmp
     step.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))   # the step rises along z
     step.export(tmp_path / "step.stl")
     plan = build(tmp_path / "step.stl", "stacked", {"distribution": "count", "count": 4, "autofix": "off", "connect": "none",
-                                                   "next_outline": True, "label_inside": True})
+                                                   "next_outline": True, "label_place": "on"})
     z2 = next(pc for sl in plan["slices"] for pc in sl["pieces"] if pc["label"] == "Z-2")   # the slab under the block
     under = shapely.polygonize([LineString(pts) for _, pts in z2["lines"]])
     assert 1300 < under.area < 1900 and under.covers(Point(z2["label_pos"][:2]))             # on the sheet: under the block

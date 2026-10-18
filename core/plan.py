@@ -63,6 +63,8 @@ def coerce_params(mode, raw: dict) -> dict:
         p["autofix"] = "off" if str(p.get("autofix")).lower() in ("false", "0", "remove") else "add"
     if "cloth" in raw and "separate" not in raw:                    # older names
         p["separate"] = bool(raw["cloth"])
+    if "label_inside" in raw and "label_place" not in raw:          # a project saved when labels were a tickbox: on the parts, or beside them
+        p["label_place"] = "on" if str(raw["label_inside"]).lower() in ("true", "1") else "beside"
     if "simplify" in raw and "facet" not in raw and "facet" in p and raw["simplify"] in (0, "0"):
         p["facet"] = 0
     return p
@@ -572,7 +574,10 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
     pieces = [pc for sl in slices for pc in sl.pieces]
     kerf = p["kerf"] if p["compensate"] else 0.0       # off by default: many machines compensate their own kerf
     tag = label_tag(p, model_path)                     # the model's name, engraved before every label: nested with room for it
-    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["labels"], p["font"], tag, p["label_inside"])
+    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["labels"], p["font"], tag, p["label_place"])
+    if crowded := [pc.label for pc in pieces if pc.crowded]:
+        notes.append(f"no free spot beside {len(crowded)} part(s) for their labels ({', '.join(crowded[:6])}{'…' if len(crowded) > 6 else ''}): "
+                     "they sit on the part, overrunning it where it is small — a smaller font, a bigger gap or sheet, or `label_model` off gives them room")
     mark_identical(pieces, p["mirror_ok"])             # which parts are the same part: one cut file, one row, a quantity
     # puzzle mode: what gets engraved is a code with no order in it. The plan keeps the real labels — the app, the
     # checks and the 3D view are the "plans" you consult when you give up — and the export carries the key.
@@ -600,7 +605,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         "curve3d": ctx.curve3d, "curve_pts": ctx.curve_pts,
         "axes3d": ctx.axes3d,                                                # radial's fan axes, curve's branches: drawn and dragged in 3D
         "bounds3d": ctx.bounds3d,                                            # the planes between lobes or at a branch's joint, moved and tilted like slices
-        "rods": ctx.rods,                                                    # dowel rods for the 3D view: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis]
+        "rods": ctx.rods,                                                    # dowel rods for the 3D view and the key: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis,name (Z-3a),from slice,to slice]
         "params_used": {k: p[k] for k in ("extra_x", "extra_y", "ring_count") if k in p},   # what autofix=add changed
         "sheets": n_sheets, "sheet": sheet_out, "sheet_thick": sheet_thick, "kerf": kerf,
         "counts": {"slices": len(slices), "parts": len(pieces), "errors": n_err, "warnings": n_warn, "faces": int(len(mesh.faces))},

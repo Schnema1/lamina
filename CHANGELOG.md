@@ -4,7 +4,31 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ## Unreleased
 
+### Added
+
+- **Dowels named after their slices, and marked beside their holes.** A connector is named after the lower of the
+  two slices it joins and a letter: `Z-3a` is dowel *a* between `Z-3` and `Z-4`, and `3a` is engraved beside its
+  hole on both slices. Read a slice's holes by their numbers: one below the slice's own takes the rod from below, its
+  own number the rod going up — with random placement, where every pair of layers has its own holes, nothing on the
+  part used to say which was which. A straight rod through several slices keeps the name of the slice it starts
+  from; with tab connectors the peg or spacer is the connector and carries the name as its part label (they were
+  `P-1`, `P-2` … in cut order). The assembly key lists every rod with its ends and its length. Marks — these and the
+  seam numbers of folded panels — now turn with their part on the sheet, so a mark placed beside a hole stays beside
+  it however the part was nested, and a hole is never cut through a mark engraved before it.
+
 ### Changed
+
+- **Labels on the parts where they fit, in free space where they do not.** A label used to go beside its part at
+  one of thirty spots round its bounding box, and when none was free — on a full sheet of a scanned model, most of
+  them — it was dropped on the part with no check at all, over neighbours, other labels and the sheet edge. It now
+  goes on the part itself wherever the whole label fits on the material, inside the next layer's outline where there
+  is one, upright or turned along the part, clear of holes and marks; otherwise beside the part at the nearest free
+  spot searched outward from its outline, inside the margin, touching no part or label, with a leader line that
+  crosses no other part and starts at the label's edge rather than through its letters. `labels on the parts`
+  (`label_inside`) became `labels go` (`label_place`): *part*, the new default, *beside* for nothing engraved on the
+  parts, *on* for always on the part; a project saved with the tickbox keeps what it had. A part with no free spot
+  anywhere is counted in the notes. The sheet title is engraved inside the top margin at a size that fits it, where
+  it used to run into the parts, and the one-file-per-part export engraves the label exactly where the sheet does.
 
 - **Labels in a single-stroke font.** Every engraved text in the cut files — part labels, seam numbers, the sheet
   title — is now drawn in a stroke font (Hershey Simplex): each letter is a few open lines the laser engraves in one
