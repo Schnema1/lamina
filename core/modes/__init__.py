@@ -88,7 +88,10 @@ COMMON: list[Param] = [
     P("gap", "number", 3, "Gap between parts on the sheet (mm)", 0, 50, 0.5, group="sheet", unit="mm"),
     P("labels", "bool", True, "Engrave part labels (LABEL layer): beside each part with a leader line, or on the part itself — see `labels on the parts`", group="sheet"),
     P("font", "number", 4.0, "Height of a capital letter in the engraved labels (mm). Single-stroke lettering: the laser draws each letter as one line, not the two edges of a filled one", 1, 30, 0.5, group="sheet", unit="mm"),
-    P("label_model", "bool", True, "Engrave the model's name before each label (bunny Z-3): two models have the same part names, "
+    P("short_name", "text", "", "The short name engraved before each label, up to 4 letters or digits (HS Y-12). Blank = the initials of the "
+      "project's or the model's name, or the first four letters of a one-word name (bunny → BUNN). The assembly key says what it stands for",
+      group="sheet", show_if=("label_model", True), label="short name"),
+    P("label_model", "bool", True, "Engrave the model's short name before each label (BUNN Z-3): two models have the same part names, "
       "and parts cut together would otherwise get mixed up. The project name when it has one. Off for a longer label's room "
       "beside small parts", group="sheet", show_if=("labels", True)),
     P("label_style", "choice", "position", "What the engraved label says. position = where the part belongs (Z-3, R-2a, P-7) · "

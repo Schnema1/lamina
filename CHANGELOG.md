@@ -23,6 +23,11 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ### Changed
 
+- **The model's name on each label is now a short code.** A label used to start with the whole project or model
+  name — `horse_statue Y-12-2` is nineteen characters, most of them the name — which is what made the labels of a
+  scanned model with a hundred small parts impossible to place. It now starts with up to four letters: the initials
+  of the name's words (`HS Y-12-2`, `MFC Z-1`), or the first four letters of a one-word name (`BUNN Z-3`); a new
+  `short_name` field sets it, and the assembly key says which name it stands for.
 - **Labels on the parts where they fit, in free space where they do not.** A label used to go beside its part at
   one of thirty spots round its bounding box, and when none was free — on a full sheet of a scanned model, most of
   them — it was dropped on the part with no check at all, over neighbours, other labels and the sheet edge. It now

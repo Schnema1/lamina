@@ -10,16 +10,28 @@ from shapely.geometry import MultiPolygon
 ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ"        # no I or O: engraved at 4 mm they are a 1 and a 0
 
 
+TAG_MAX = 4   # characters of the short name engraved before every label: room for the label itself on a small part
+
+
+def short_name(name) -> str:
+    """A name cut down to TAG_MAX capitals for engraving: the initials of its words (horse statue → HS, my final cube →
+    MFC), or the first letters of a one-word name (bunny → BUNN). ASCII letters and digits only — the name comes from
+    a file someone else chose — and I and O are allowed, since a word's initials are read as a word."""
+    words = "".join(c if c.isalnum() else " " for c in str(name)).split()
+    raw = "".join(w[0] for w in words) if len(words) > 1 else "".join(words)
+    return "".join(c for c in raw.upper() if c.isascii() and c.isalnum())[:TAG_MAX]
+
+
 def label_tag(params, model_path="") -> str:
-    """What is engraved before every part label, so parts of two models cut together are never mixed up — "bunny Z-3"
-    beside "egg Z-3". The project's name when it has one, else the model's (`model_name`, which the server sets from
-    the file as it was uploaded; the path is the fallback for the CLI). Letters, digits, - _ . and spaces only: the
-    name comes from a file someone else chose, and a bracket or backslash would break the EPS string it is written
-    into. Capped at 20 characters, so the label still fits beside a small part."""
+    """What is engraved before every part label, so parts of two models cut together are never mixed up — "BUNN Z-3"
+    beside "EGG Z-3": the `short_name` parameter when it is set, else the short form of the project's name when it
+    has one, else of the model's (`model_name`, which the server sets from the file as it was uploaded; the path is
+    the fallback for the CLI). Four characters at most, so the label still fits on a small part; the assembly key
+    says which name it stands for."""
     if not params.get("labels", True) or not params.get("label_model", True):
         return ""
-    name = params.get("project") or params.get("model_name") or (Path(model_path).stem if model_path else "")
-    return " ".join("".join(c if c.isalnum() or c in "-_." else " " for c in str(name)).split())[:20].strip()
+    given = "".join(c for c in str(params.get("short_name") or "").upper() if c.isascii() and c.isalnum())[:TAG_MAX]   # as typed, cleaned
+    return given or short_name(params.get("project") or params.get("model_name") or (Path(model_path).stem if model_path else ""))
 
 
 def label_codes(labels, seed: str) -> dict:

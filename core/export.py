@@ -391,6 +391,8 @@ def key_text(plan):
            f"{plan['mode']} · {plan['counts']['slices']} slices · {plan['counts']['parts']} parts · {plan['sheets']} sheet(s)",
            "", "How the labels read"]
     out += ["  " + s.strip() for s in (plan.get("legend") or "").split(" · ") if s.strip()]
+    if plan.get("label_tag"):
+        out.append(f"  Every label starts with {plan['label_tag']}, short for {p.get('project') or p.get('model_name') or 'the model'}: parts of two models cut together are never mixed up.")
     out += ["  A part too big for the sheet is cut into pieces and the piece number comes last: Z-3-2 is the second piece of Z-3.",
             {"on": "  Each label is engraved on its own part.", "beside": "  Each label is engraved beside its own part on the sheet, with a line pointing at it."}
             .get(p.get("label_place"), "  Each label is engraved on its own part where it fits, else beside it on the sheet with a line pointing at it.")]

@@ -330,7 +330,8 @@ does not slip through. It carries the most signal for stacked and folded work; d
   quantity, in that order and separated by spaces, and it always ends in its quantity, `x1` included
   (`egg_v1.0 Z-1 plywood x4.svg`, `egg_v1.0 Z-2 plywood x1.svg`); a `cut-list.txt` says which parts each file
   covers and gives each part's width × height in your units.
-- **The model's name on every part**: each engraved label starts with it (`bunny Z-3`), so parts of two models cut
+- **The model's name on every part**, short: each engraved label starts with a code of up to four letters (`BUNN Z-3`,
+  `HS Y-12` for a horse statue), the initials of the project's or model's name unless `short_name` sets it, so parts of two models cut
   together are never mixed up. The project's name when it has one, else the model's file name; room for it is kept
   when the parts are nested, and `label_model` turns it off.
 - **Weight**: the Export tab weighs the parts as cut (holes and slots taken out, each part at its own thickness, one

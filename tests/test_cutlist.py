@@ -57,26 +57,31 @@ def test_per_piece_export_merges_identical_pieces_with_a_quantity(tmp_path):
 
 
 def test_parts_carry_the_model_name_and_the_cut_list_their_size(tmp_path):
-    """Two models have the same part names, so every engraved label starts with the model's (cube Z-1 beside egg Z-1),
-    and the cut list gives each part's width × height in the export's units. A name from someone else's file is
-    cleaned before it is engraved: a bracket would break the EPS string it is written into."""
+    """Two models have the same part names, so every engraved label starts with the model's short name (CUBE Z-1 beside
+    EGG Z-1): up to four characters, the initials of a name of several words, or what `short_name` says. The cut list
+    gives each part's width × height in the export's units. A name from someone else's file is cleaned before it is
+    engraved: letters and digits only."""
     base = {"distribution": "count", "count": 4, "autofix": "off", "connect": "none"}
     plan = build(EXAMPLES / "cube.stl", "stacked", base)
     export(plan, tmp_path / "mm", fmts=("svg",), labels=True, per_piece=True)
-    assert 'data-text="cube Z-1 ×4"' in (tmp_path / "mm" / f"{design_name(plan)} Z-1 x4.svg").read_text(encoding="utf-8")
+    assert 'data-text="CUBE Z-1 ×4"' in (tmp_path / "mm" / f"{design_name(plan)} Z-1 x4.svg").read_text(encoding="utf-8")
     rows = (tmp_path / "mm" / f"{design_name(plan)} cut-list.txt").read_text(encoding="utf-8").splitlines()
     assert "size (mm)" in rows[0] and any(r.startswith(f"{design_name(plan)} Z-1 x4") and "180.0 × 180.0" in r for r in rows), rows
     assert any(r.startswith(f"{design_name(plan)} scale-check") and "100.0 × 12.0" in r for r in rows), rows
     export(plan, tmp_path / "in", fmts=("svg",), labels=True, per_piece=True, units="in")
     assert "7.087 × 7.087" in (tmp_path / "in" / f"{design_name(plan)} cut-list.txt").read_text(encoding="utf-8")   # 180 mm in inches
     export(plan, tmp_path / "sheet", fmts=("svg",), labels=True)
-    assert (tmp_path / "sheet" / f"{design_name(plan)} sheet1.svg").read_text(encoding="utf-8").count('data-text="cube Z-') == 4
+    assert (tmp_path / "sheet" / f"{design_name(plan)} sheet1.svg").read_text(encoding="utf-8").count('data-text="CUBE Z-') == 4
 
     odd = build(EXAMPLES / "cube.stl", "stacked", {**base, "project": "my (final) \\ cube"})
-    assert odd["label_tag"] == "my final cube"
+    assert odd["label_tag"] == "MFC"
     export(odd, tmp_path / "odd", fmts=("eps", "svg"), labels=True, per_piece=True)
-    assert 'data-text="my final cube Z-1 ×4"' in (tmp_path / "odd" / f"{design_name(odd)} Z-1 x4.svg").read_text(encoding="utf-8")
+    assert 'data-text="MFC Z-1 ×4"' in (tmp_path / "odd" / f"{design_name(odd)} Z-1 x4.svg").read_text(encoding="utf-8")
     assert "lineto" in (tmp_path / "odd" / f"{design_name(odd)} Z-1 x4.eps").read_text(encoding="latin-1")
+
+    given = build(EXAMPLES / "cube.stl", "stacked", {**base, "short_name": "sculpture #12"})
+    assert given["label_tag"] == "SCUL"                                   # a one-word name: its first four letters, capitals
+    assert build(EXAMPLES / "cube.stl", "stacked", {**base, "short_name": "ab"})["label_tag"] == "AB"
 
     off = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_model": False})
     export(off, tmp_path / "off", fmts=("svg",), labels=True, per_piece=True)
