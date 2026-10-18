@@ -71,16 +71,16 @@ button.small{padding:3px 8px;border:1px solid var(--line);background:var(--panel
    the darkest of them nearly vanish: a reporter could only find the blue outlines by hovering them. So the preview
    is drawn in the Okabe–Ito set, which stays distinguishable with any common colour blindness, and nothing about
    the exported file changes. A part with an error keeps the red the page gives it: its own attribute beats this. */
-.sheet svg g[id="OUTER"]{stroke:#56b4e9}
-.sheet svg g[id="INNER"]{stroke:#e69f00}
-.sheet svg g[id="SCORE"]{stroke:#f0e442}
-.sheet svg g[id="GUIDE"]{stroke:#009e73}   /* the next layer's outline on a stacked slice: the file's orange would read as INNER here */
-.sheet svg g[id="LABEL"]{stroke:#cc79a7;fill:none}
+.sheet svg g.OUTER{stroke:#56b4e9}
+.sheet svg g.INNER{stroke:#e69f00}
+.sheet svg g.SCORE{stroke:#f0e442}
+.sheet svg g.GUIDE{stroke:#009e73}   /* the next layer's outline on a stacked slice: the file's orange would read as INNER here */
+.sheet svg g.LABEL{stroke:#cc79a7;fill:none}
 /* A 0.15 mm line on a 600 mm sheet drawn 500 px wide is an eighth of a pixel — which is the other half of why the
    outlines could only be found by hovering them. non-scaling-stroke measures the width in pixels instead, so the
    cut lines stay a clean hairline at any zoom without the file carrying a width no machine wants. */
-.sheet svg g[id]{stroke-width:1.2px;vector-effect:non-scaling-stroke}
-.sheet svg g[id] *{vector-effect:non-scaling-stroke}
+.sheet svg g[class]{stroke-width:1.2px;vector-effect:non-scaling-stroke}
+.sheet svg g[class] *{vector-effect:non-scaling-stroke}
 .sl{display:flex;gap:6px;align-items:center}.sl input[type=range]{flex:1;min-width:60px}.sl input[type=number]{width:74px;flex:none}
 /* a slider drives these boxes, so the spin buttons only hide the digits */
 .sl input[type=number],#sel input[type=number]{appearance:textfield;-moz-appearance:textfield}

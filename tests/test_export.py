@@ -39,13 +39,11 @@ def test_svg_layers_and_entity_counts_stacked(tmp_path):
     exp = sheet0_expected_counts(plan)
 
     tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))
-    outer_g = tree.xpath('//svg:g[@id="OUTER"]', namespaces=SVG_NS)[0]
-    inner_g = tree.xpath('//svg:g[@id="INNER"]', namespaces=SVG_NS)[0]
-    assert len(outer_g.xpath('.//svg:path', namespaces=SVG_NS)) == exp["outer"]
-    assert len(inner_g.xpath('.//svg:path', namespaces=SVG_NS)) == exp["inner"]
+    assert len(tree.xpath('//svg:g[@class="OUTER"]/svg:path', namespaces=SVG_NS)) == exp["outer"]
+    assert len(tree.xpath('//svg:g[@class="INNER"]/svg:path', namespaces=SVG_NS)) == exp["inner"]
     # stacked cube has no fold lines, so SCORE is legitimately absent
     assert exp["score"] == 0
-    assert not tree.xpath('//svg:g[@id="SCORE"]', namespaces=SVG_NS)
+    assert not tree.xpath('//svg:g[@class="SCORE"]', namespaces=SVG_NS)
 
 
 def test_next_layer_outline_goes_on_the_guide_layer_and_identical_slices_stay_one_part(tmp_path):
@@ -61,17 +59,16 @@ def test_next_layer_outline_goes_on_the_guide_layer_and_identical_slices_stay_on
 
     export(plan, tmp_path, fmts=("svg",), labels=True)
     tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))
-    assert not tree.xpath('//svg:g[@id="SCORE"]', namespaces=SVG_NS)
-    guide_g = tree.xpath('//svg:g[@id="GUIDE"]', namespaces=SVG_NS)[0]
-    assert len(guide_g.xpath('.//svg:path', namespaces=SVG_NS)) == sum(len(pc["lines"]) for pc in pieces if pc["place"][0] == 0)
+    assert not tree.xpath('//svg:g[@class="SCORE"]', namespaces=SVG_NS)
+    assert len(tree.xpath('//svg:g[@class="GUIDE"]/svg:path', namespaces=SVG_NS)) == sum(len(pc["lines"]) for pc in pieces if pc["place"][0] == 0)
 
     files = {f.name.split(" ", 1)[1]: f for f in export(plan, tmp_path / "pieces", fmts=("svg",), labels=True, per_piece=True)}
     assert "Z-1 x3.svg" in files and "Z-4 x1.svg" in files, files
     # the one-file-per-part export carries the guide too, in the part's own frame
     piece = etree.parse(str(files["Z-1 x3.svg"]))
     z1 = next(pc for pc in pieces if pc["label"] == "Z-1")
-    assert len(piece.xpath('//svg:g[@id="GUIDE"]//svg:path', namespaces=SVG_NS)) == len(z1["kerfed_lines"]) == len(z1["lines"]) > 0
-    assert not etree.parse(str(files["Z-4 x1.svg"])).xpath('//svg:g[@id="GUIDE"]', namespaces=SVG_NS)
+    assert len(piece.xpath('//svg:g[@class="GUIDE"]//svg:path', namespaces=SVG_NS)) == len(z1["kerfed_lines"]) == len(z1["lines"]) > 0
+    assert not etree.parse(str(files["Z-4 x1.svg"])).xpath('//svg:g[@class="GUIDE"]', namespaces=SVG_NS)
 
 
 def test_guide_is_the_layer_as_cut_with_its_inner_edge(tmp_path):
@@ -129,9 +126,9 @@ def test_a_lone_part_file_puts_the_label_under_the_next_layer_like_the_sheet(tmp
     assert 1300 < under.area < 1900 and under.covers(Point(z2["label_pos"][:2]))             # on the sheet: under the block
     files = export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True)
     tree = etree.parse(str(next(f for f in files if " Z-2 " in f.name)))
-    d = tree.xpath('//svg:g[@id="GUIDE"]/svg:path/@d', namespaces=SVG_NS)[0]
+    d = tree.xpath('//svg:g[@class="GUIDE"]/svg:path/@d', namespaces=SVG_NS)[0]
     ring = Polygon([tuple(map(float, xy.split(","))) for xy in re.findall(r"[ML]([-\d.]+,[-\d.]+)", d)])
-    label = next(t for t in tree.xpath('//svg:g[@id="LABEL"]/svg:path', namespaces=SVG_NS) if "Z-2" in t.get("data-text"))
+    label = next(t for t in tree.xpath('//svg:g[@class="LABEL"]/svg:path', namespaces=SVG_NS) if "Z-2" in t.get("data-text"))
     pts = [tuple(map(float, xy.split(","))) for xy in re.findall(r"[ML]([-\d.]+,[-\d.]+)", label.get("d"))]   # its strokes
     xs, ys = zip(*pts)
     assert ring.covers(Point((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2))               # in its file: the same spot
@@ -165,7 +162,7 @@ def test_a_lone_part_file_carries_its_seam_numbers(tmp_path):
     for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True):
         lab = f.name.split(" ")[1]
         if lab in pieces:
-            texts = etree.parse(str(f)).xpath('//svg:g[@id="LABEL"]/svg:path/@data-text', namespaces=SVG_NS)
+            texts = etree.parse(str(f)).xpath('//svg:g[@class="LABEL"]/svg:path/@data-text', namespaces=SVG_NS)
             small = [t for t in texts if lab not in t]                     # every text but the part's own label is a seam number
             assert len(small) == len(pieces[lab]["marks"]) == len(pieces[lab]["kerfed_marks"]), lab
 
@@ -196,11 +193,9 @@ def test_svg_score_and_label_counts_folded(tmp_path):
     assert exp["score"] > 0  # folded panels have fold lines — this plan should actually exercise SCORE
 
     tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))
-    score_g = tree.xpath('//svg:g[@id="SCORE"]', namespaces=SVG_NS)[0]
-    label_g = tree.xpath('//svg:g[@id="LABEL"]', namespaces=SVG_NS)[0]
-    assert len(score_g.xpath('.//svg:path', namespaces=SVG_NS)) == exp["score"]
+    assert len(tree.xpath('//svg:g[@class="SCORE"]/svg:path', namespaces=SVG_NS)) == exp["score"]
     # LABEL texts (one stroke path each) = per-piece marks + per-piece label + the sheet title
-    assert len(label_g.xpath('.//svg:path[@data-text]', namespaces=SVG_NS)) == exp["marks"] + exp["label_pos"] + 1
+    assert len(tree.xpath('//svg:g[@class="LABEL"]/svg:path[@data-text]', namespaces=SVG_NS)) == exp["marks"] + exp["label_pos"] + 1
 
 
 def test_dxf_reloads_with_same_layers_and_matching_entity_counts(tmp_path):
@@ -229,7 +224,7 @@ def test_a_project_name_is_text_in_the_svg_not_markup(tmp_path):
     export(plan, tmp_path, fmts=("svg",), labels=True)
     tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))                          # still well-formed…
     assert not tree.xpath("//*[local-name()='img']")                          # …and the tag is not an element
-    assert '<img' in "".join(tree.xpath('//svg:g[@id="LABEL"]/svg:path/@data-text', namespaces=SVG_NS))   # but text
+    assert '<img' in "".join(tree.xpath('//svg:g[@class="LABEL"]/svg:path/@data-text', namespaces=SVG_NS))   # but text
 
 
 def test_assembly_key_explains_the_labels_and_lists_every_part(tmp_path):
@@ -406,3 +401,24 @@ def test_every_file_carries_the_design_name_so_two_designs_never_mix(tmp_path):
         assert all(f.name.startswith("cube_v1.0 ") for f in a), [f.name for f in a]
         assert all(f.name.startswith("my_egg_v2.1 ") for f in b), [f.name for f in b]
         assert len({f.name for f in a} | {f.name for f in b}) == len(a) + len(b) == len(list(out.iterdir()))
+
+
+def test_each_part_is_one_svg_group_with_its_labels_and_marks(tmp_path):
+    """Someone rearranging the sheet in a vector editor drags a part as one thing: its cuts, its dowel numbers, its
+    label and leader, and its arrows are one <g class="piece">, so nothing goes out of register. The colour stays
+    on each layer group, which is what laser software sorts the lines by."""
+    from core.export import items_for_sheet
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 3, "autofix": "off", "connect": "dowel",
+                                                   "orient_mark": True, "label_place": "beside"})
+    export(plan, tmp_path, fmts=("svg",), labels=True)
+    tree = etree.parse(str(tmp_path / f"{design_name(plan)} sheet1.svg"))
+    groups = tree.xpath('//svg:g[@class="piece"]', namespaces=SVG_NS)
+    items = items_for_sheet(plan, 0)                               # the parts on the sheet and the scale-check bar with its note
+    assert [g.get("data-label") for g in groups] == [it.key for it in items] and any(it.marks for it in items) and any(it.leader for it in items)
+    for it, g in zip(items, groups):
+        assert g.xpath('./svg:g[@class="OUTER"]/svg:path/@data-label', namespaces=SVG_NS) == [it.key]
+        assert sorted(g.xpath('./svg:g[@class="LABEL"]/svg:path/@data-text', namespaces=SVG_NS)) == sorted([it.label] + [str(m[2]) for m in it.marks])
+        assert len(g.xpath('./svg:g[@class="LABEL"]/svg:line', namespaces=SVG_NS)) == (1 if it.leader else 0)
+        assert len(g.xpath('./svg:g[@class="LABEL"]/svg:path[not(@data-text)]', namespaces=SVG_NS)) == len(it.scores)   # the arrows
+    assert tree.xpath('//svg:g[@class="sheet"]//svg:rect', namespaces=SVG_NS)                   # the border is the sheet's, not a part's
+    assert {(g.get("stroke"), g.get("fill")) for g in tree.xpath('//svg:g[@class="OUTER"]', namespaces=SVG_NS)} == {("#0055ff", "none")}

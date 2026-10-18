@@ -34,6 +34,10 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ### Changed
 
+- **Each part is one group in the SVG**: its cuts, fold and guide lines, dowel numbers, arrows, label and leader line
+  sit in one `<g class="piece">` (with a sub-group per layer), so a part dragged elsewhere in Inkscape or Illustrator
+  takes its labels with it instead of leaving them behind. The border and title are the sheet's own group. Each
+  layer group keeps its colour, which is what laser software sorts by, so cut settings by colour work as before.
 - **Two stacked examples open with tab connectors**: the `tube` with pegs and the `wavy_torus` with spacers across
   its 5 mm gaps, beside the dowelled ones, so both kinds of connector are on show.
 
