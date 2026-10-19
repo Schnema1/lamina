@@ -4,7 +4,7 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ## Unreleased
 
-The release for the laser: every label in a single-stroke font, dowels named after their slices and numbered beside their holes, labels that keep clear of parts and of each other, orientation arrows, a four-letter short name, and non-uniform spacing drawn as a curve in every technique, with a graph to draw it, and a stacked stack can be shifted to land a slice on a feature. Thin tips and slivers are found and can be trimmed off, small parts go into the hollows of big ones, and the first sheet is filled before the second. Folded nets got seam numbers that can be read and hinge lines for their tabs, the SVG keeps each part with its labels, and the assembly video names each part as it goes in.
+The release for the laser: every label in a single-stroke font, dowels named after their slices and numbered beside their holes, labels that keep clear of parts and of each other, orientation arrows, a four-letter short name, and non-uniform spacing drawn as a curve in every technique, with a graph to draw it; a stack can be shifted to land a slice on a feature. Thin tips and slivers are found and can be trimmed off, small parts go into the hollows of big ones, and the first sheet is filled before the second. Folded nets got seam numbers that can be read and hinge lines for their tabs, the SVG keeps each part with its labels, and the assembly video names each part as it goes in.
 
 ### Added
 
