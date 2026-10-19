@@ -11,7 +11,7 @@ from shapely import affinity
 from shapely.geometry import MultiPolygon, MultiLineString, MultiPoint
 from shapely.ops import unary_union
 from .modes import load_all, Ctx
-from .geometry import section_polygons, as_multi, poly_coords, line_coords, mark_box, mark_rot, min_dims, min_rect_angle, orient_arrows
+from .geometry import section_polygons, as_multi, poly_coords, line_coords, mark_box, mark_rot, min_dims, min_rect_angle, orient_arrows, trim_thin
 from .checks import STRUCTURAL, check_plan, suggest_fixes, crossing_suggestions
 from .split import split_slice, fits_rotated, islands
 from .nest import nest
@@ -541,7 +541,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         progress("placing slices and slots" + again, 0.2)
         ctx = Ctx(mesh, p)
         slices = mode.build(ctx)
-        kept, shaved, grazed = _profiles(slices, mesh, p, again)
+        kept, shaved, grazed, trimmed = _profiles(slices, mesh, p, again)
         mode.guide_outlines(ctx, kept)                # on the finished outlines: grown, slivers shed
         dropped = [s for s in slices if s not in kept and s.label not in grazed]
         slices = kept
@@ -557,6 +557,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
                 p[k] = sorted(set(map(float, p[k])) | set(map(float, v))) if isinstance(v, list) else v
         notes.append(f"auto-fix: added crossing slices ({len(adds)}) so every region is held")
     _run.band = (0.0, 1.0)                          # the passes are over: the last stages own the rest of the bar
+    if trimmed:
+        notes.append(f"{trimmed} thin spot(s) trimmed off the parts (trim_thin): a tip or sliver too thin for too long, which would have broken off — the part ends blunt there, a little short of the model")
     if shaved:
         notes.append(f"{shaved} sliver(s) thinner than {p['min_feature']:g} mm everywhere left out: shavings a slot cuts off its own part, "
                      f"and specks under {p['min_part']:g} mm where a slice only grazes the surface — too small to cut or handle")
@@ -635,7 +637,7 @@ def _profiles(slices, mesh, p, again):
     """Each slice sectioned and its cuts taken out: the kept slices with `profile` set, how many slivers came off, and
     the labels of slices that only grazed the model (a speck, not a part, not an error). A slice the plane misses, or
     whose cuts leave nothing, says so and is dropped."""
-    kept, shaved, grazed = [], 0, set()
+    kept, shaved, grazed, trimmed = [], 0, set(), 0
     for i, sl in enumerate(slices):         # sections → profiles (modes may hand over a finished `raw` for synthetic parts)
         progress(f"sectioning{DETAIL}{i + 1} of {len(slices)}{again}", 0.35 + 0.35 * i / len(slices))
         sectioned = sl.group in STRUCTURAL       # a plane through the model, not a part the technique draws (peg, panel, strip)
@@ -654,6 +656,9 @@ def _profiles(slices, mesh, p, again):
         if sectioned and not prof.is_empty:
             prof, n = shed_slivers(sl.raw, prof, sl.cuts, p["min_feature"], p["min_part"])
             shaved += n
+            if p.get("trim_thin") and not prof.is_empty:
+                prof, n = trim_thin(prof, p["min_feature"])
+                trimmed += n
             if prof.is_empty:                    # a speck and nothing else: not a part, not an error
                 grazed.add(sl.label)
                 continue
@@ -662,7 +667,7 @@ def _profiles(slices, mesh, p, again):
             continue
         sl.profile = prof
         kept.append(sl)
-    return kept, shaved, grazed
+    return kept, shaved, grazed, trimmed
 
 
 def _oversize(slices, p, sheet0, mesh, ctx):

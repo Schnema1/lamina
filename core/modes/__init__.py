@@ -191,6 +191,7 @@ COMMON: list[Param] = [
     P("autofix", "choice", "add", "add = hold what nothing holds the way this technique holds things (crossing slices, rings, spines; up to 2 rounds); off = report only. Nothing of the model is ever taken away: what still cannot work stays, with its error and the fixes to click, deleting among them. Everything done is listed in the report", choices=["add", "off"], group="checks"),
     P("min_feature", "number", 2.0, "Check: minimum wall / feature width (mm)", 0.1, 50, 0.1, group="checks", unit="mm"),
     P("min_part", "number", 6.0, "Check: parts smaller than this (mm) in both directions are flagged", 0.5, 100, 0.5, group="checks", unit="mm"),
+    P("trim_thin", "bool", False, "Cut off what is too thin for too long to survive the cutter or the hand — thinner than min_feature for twice that length, or a spike under 1.5 × min_feature for four times it: the sharp point of a slice that meets the surface at a grazing angle, the wall left between a slot and the edge. The part ends blunt there, a little short of the model; off, each such spot is a warning on its part", group="checks", label="trim thin spots"),
 ]
 
 

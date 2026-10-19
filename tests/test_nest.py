@@ -5,10 +5,13 @@ with shapely against the plan's own placed coordinates, not against anything nes
 itself — the routing threshold is force-selected via monkeypatch so this doesn't depend on where
 MANY is currently set.
 """
+import math
 import pathlib
 
+import numpy as np
 import pytest
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 import core.nest as nest
 from core.plan import build
@@ -252,8 +255,11 @@ def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mo
         on = [pc for pc in pieces if pc["place"][0] == si]
         parts = {pc["label"]: shapely.union_all([Polygon(r[0], r[1:]) for r in pc["placed"]]) for pc in on}
         rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{'' if pc['label_short'] else tag} {pc['label']}".strip(), pc["label_size"])) for pc in on}
-        # room for every one in full, or at four fifths right beside the part, which wins over a full one farther away
-        assert all(pc["label_size"] >= 0.8 * font - 1e-9 and not pc["label_short"] for pc in on), [(pc["label"], pc["label_size"]) for pc in on if pc["label_size"] < 0.8 * font]
+        # room for every one in full or at four fifths — on the part, or right beside it, which wins over a full one
+        # farther away — or at two thirds on the part itself (a narrow ring's name along the ring, rather than a line to it)
+        assert all(pc["label_size"] >= 0.8 * font - 1e-9 or (pc["leader"] is None and pc["label_size"] >= 0.65 * font - 1e-9) for pc in on), \
+            [(pc["label"], pc["label_size"]) for pc in on if pc["label_size"] < 0.8 * font]
+        assert all(not pc["label_short"] or pc["leader"] is None for pc in on)      # the short form only ever on the part
         for pc in on:
             lab, r = pc["label"], rects[pc["label"]]
             if pc["leader"] is None:                                            # on the part: whole, and off its marks
@@ -281,3 +287,21 @@ def test_seven_rings_fill_the_first_sheet_before_the_second():
     rings = [Piece(f"Z-{i + 1}", as_multi(Point(0, 0).buffer(90).difference(Point(0, 0).buffer(80))), stock) for i in range(7)]
     assert nest.nest(rings, (600, 400), gap=3, margin=5) == 2
     assert sorted(pc.place[0] for pc in rings) == [0] * 6 + [1]
+
+
+def test_a_disc_nests_inside_a_ring_full_of_dowel_holes():
+    """A hollow model's slice is a ring with a wide middle and a dowel hole every few degrees along its band. Each
+    hole was a notch to the convex decomposition behind the no-fit polygons; past the piece cap the ring became its
+    hull and its middle was lost. The small holes are filled before that cut, and the disc goes in the middle."""
+    from types import SimpleNamespace
+    from shapely.geometry import Point
+    from core.geometry import as_multi
+    from core.model import Piece
+    stock = SimpleNamespace(thickness=3)
+    band = Point(0, 0).buffer(40).difference(Point(0, 0).buffer(30))
+    holes = [Point(35 * math.cos(a), 35 * math.sin(a)).buffer(1.5) for a in np.linspace(0, 2 * math.pi, 30, endpoint=False)]
+    ring = Piece("ring", as_multi(band.difference(unary_union(holes))), stock)
+    disc = Piece("disc", as_multi(Point(0, 0).buffer(25)), stock)
+    assert len(ring.geom.geoms[0].interiors) == 31
+    assert nest.nest([ring, disc], (100, 100), gap=2, margin=0) == 1
+    assert ring.placed.geoms[0].interiors[0].envelope.contains(disc.placed) or any(Polygon(i).contains(disc.placed) for i in ring.placed.geoms[0].interiors)

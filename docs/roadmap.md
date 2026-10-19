@@ -29,7 +29,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 | Original | Status | Notes |
 |---|---|---|
 | Slice Direction gizmo (any angle, reset) | ✅ | `rotate` (three angles) turns the whole model, `center` moves the slicing axis / grid; per-slice `tilt` / `roll`, `rotate_grid` on top; "original size" resets |
-| Stacked Slices: direction, by count / by distance | ✅ | `axis`, `distribution`, `count`; plus `space` (empty space between slices) |
+| Stacked Slices: direction, by count / by distance | ✅ | `axis`, `distribution`, `count`; plus `space` (empty space between slices) and `shift` (move every slice plane along the axis, to land one on a feature) |
 | Stacked: dowels (diameter, 6 shapes) | ✅ | `connect=dowel`, 6 hole shapes; `connect=tab` = flat pegs, or tabbed spacers when `space` > 0 |
 | Stacked: dowel placement by clicking in 3D, Automatic, delete | ✅ | alt-click a part = add a point there, alt-click a point = remove; `placement` aligned / random per pair / along your 3D `lines`. Aligned dowels hold each layer from near its edge: how well is measured per piece (how far it reaches from its dowels' middle over their widest spacing, `dowel_leverage`), a layer the shared rods do not hold gets its own spread, and the Checks tab names the dowel that would hold a piece still bunched, with a button. Dowels you add come on top of `n_points` |
 | Interlocked Slices: 2 families, counts, direction, rotate | ✅ | `nx`, `ny`, `up`, `rotate`, `distribution` |
@@ -102,7 +102,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 | Original | Status |
 |---|---|
 | Unconnected / floating pieces | ✅ region-level assembly connectivity (slots, connectors, glued contact): floating regions and separate groups are errors; `autofix=add` adds crossing slices whose section reaches the rest (interlocked), rings or spines, and never deletes a piece; one-click fixes add a slice, move, delete the group, round the model |
-| Part too small / too narrow | ✅ `min_part`, `min_feature`, thin-neck erosion |
+| Part too small / too narrow | ✅ `min_part`, `min_feature`, thin-neck erosion; thin tips and slivers warned about and cut off with `trim_thin` |
 | Notches split a part | ✅ error: slots cut the part into loose regions |
 | Parts exceed the sheet | ✅ error (rotation considered) or auto-split with puzzle tabs, placed only where a whole tab fits (never clipped by a hole or the outline). A part over the sheet in *both* directions is cut the long way and then across; whatever still does not fit is named with the size that would, and keeps its sheet to itself instead of being nested over |
 | Multiple / overlapping notches | ✅ warning: two slots overlap each other |

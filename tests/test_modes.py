@@ -507,3 +507,32 @@ def test_orientation_arrows_are_two_lines_inside_every_part_clear_of_its_marks()
             for a in arrows:
                 assert geom.buffer(-0.3).covers(a)
                 assert all(not a.intersects(mark_box(x, y, t, font, rot)) for x, y, t, rot in pc["marks"])
+
+
+def test_stacked_shift_moves_every_slice_plane_and_keeps_the_model_covered():
+    """`shift` moves every slice plane along the axis by the same amount, so one slice can be put on a feature of
+    the model. Laid by distance, the stack is laid again from the shifted start and still covers the model; by count,
+    the slices keep their spacing and one shifted past the end is left out, with a note."""
+    base = {"autofix": "off", "connect": "none", "thickness": 10}
+    even = build(EXAMPLES / "cube.stl", "stacked", base)
+    moved = build(EXAMPLES / "cube.stl", "stacked", {**base, "shift": 4})
+    z = lambda plan: sorted(round(sl["M"][2][3], 3) for sl in plan["slices"])      # the frame's origin along z
+    # 18 touching slices filled the 180 mm cube exactly; shifted, the one that would stick out past the top is left off
+    assert len(z(moved)) == len(z(even)) - 1 and all(abs(b - a - 4) < 1e-6 for a, b in zip(z(even), z(moved)))
+    far = build(EXAMPLES / "cube.stl", "stacked", {**base, "shift": 37})          # more than a pitch: laid again from the shifted start
+    assert len(z(far)) == len(z(even)) - 1 and all(abs((q - z(even)[0] - 37) % 10) < 1e-6 for q in z(far))   # the shifted pitch grid
+    assert all(-85 <= q <= 85 for q in z(far)) and abs(z(far)[0] - z(even)[0] - 7) < 1e-6   # whole slices inside the model
+    by_count = {**base, "distribution": "count", "count": 6}
+    even_n = build(EXAMPLES / "cube.stl", "stacked", by_count)
+    off_end = build(EXAMPLES / "cube.stl", "stacked", {**by_count, "shift": 20})
+    assert len(z(even_n)) == 6 and len(z(off_end)) == 5                            # the top one went past the end
+    assert all(abs(b - a - 20) < 1e-6 for a, b in zip(z(even_n), z(off_end)))
+    assert any("shift 20 mm: 1 slice(s) moved past the end" in n for n in off_end["notes"])
+    # a slice of its own thickness keeps its room in the shifted stack, as it does in the unshifted one
+    thick = build(EXAMPLES / "cube.stl", "stacked", {**base, "thick": {"Z-3": 20}, "shift": 4})
+    zt = z(thick); th = {sl["label"]: sl["thickness"] for sl in thick["slices"]}
+    assert th["Z-3"] == 20 and not thick["counts"]["errors"]
+    assert all(b - a >= (th[f"Z-{i + 1}"] + th[f"Z-{i + 2}"]) / 2 - 1e-6 for i, (a, b) in enumerate(zip(zt, zt[1:])))
+    assert zt[0] == z(moved)[0]                                                     # the same shifted start
+    clash = build(EXAMPLES / "cube.stl", "stacked", {**by_count, "thick": {"Z-3": 60}, "shift": 1})   # 60 mm among 10 mm slices 30 mm apart
+    assert any("slices overlap" in e for e in clash["errors"])                       # by count, a shift reports what overlaps

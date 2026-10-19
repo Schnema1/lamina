@@ -19,7 +19,7 @@ import numpy as np
 import shapely
 from shapely import affinity
 from scipy.ndimage import binary_erosion, distance_transform_edt
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 from shapely.ops import nearest_points, split, unary_union
 from shapely.geometry.polygon import orient
 from shapely.strtree import STRtree
@@ -57,16 +57,32 @@ def _hull(geom):
     return np.asarray(orient(geom.convex_hull).exterior.coords)[:-1]       # counter-clockwise, closing point dropped
 
 
-def _convex_pieces(geom, tol, cap):
+def _fill_small_holes(geom, area):
+    """`geom` with every hole smaller than `area` filled: nothing to nest fits in them, and each costs the
+    decomposition a cut."""
+    return as_multi(MultiPolygon([Polygon(g.exterior, [r for r in g.interiors if Polygon(r).area >= area]) for g in as_multi(geom).geoms]))
+
+
+def _convex_pieces(geom, tol, cap, coarse=False):
     """Convex pieces whose union covers geom and overruns it by at most `tol` (an approximate convex decomposition):
     each piece is split at its deepest notch, along the bisector of the notch, until the hull of every piece is
     within `tol` of it. Holes are notches too, so a ring becomes a few wedges around an open middle. Coordinate
-    arrays, one hull each. More than `cap` pieces and the answer is the one hull: the no-fit polygons cost a ring
-    per piece of every placed part, and a scanned outline with dozens of shallow pockets is not worth that."""
+    arrays, one hull each. More than `cap` pieces and the answer is coarse: the hull round the outside (the no-fit
+    polygons cost a ring per piece of every placed part, and a scanned outline with dozens of shallow pockets is not
+    worth that) with each hole kept as the largest disc it holds — convex, and inside the hole, so the wedges between
+    hull and disc still cover every bit of material — and a hollow slice's middle stays open to the small parts."""
     out, todo = [], list(as_multi(geom).geoms)
     while todo:
         if len(out) + len(todo) > cap:
-            return [_hull(geom)]
+            if coarse:
+                return [_hull(geom)]
+            discs = []
+            for g in as_multi(geom).geoms:
+                for r in g.interiors:
+                    c = shapely.maximum_inscribed_circle(Polygon(r), tol)
+                    if c.length > 2 * tol:
+                        discs.append(Point(c.coords[0]).buffer(c.length * 0.98, 4).exterior)
+            return _convex_pieces(Polygon(geom.convex_hull.exterior, discs), tol, cap, coarse=True) if discs else [_hull(geom)]
         p = todo.pop()
         hull = p.convex_hull
         deepest = None
@@ -300,10 +316,16 @@ def _poly_nest(prepared, sheet, gap, margin):
     docstring), largest first; a part bigger than a sheet takes the sheet it lands on to itself."""
     W, H = sheet; half = gap / 2
     order = sorted(range(len(prepared)), key=lambda i: -prepared[i][0].kerfed.area)
+    grown_all = [pc.nest_shape.buffer(half + TOL, join_style=1) for pc, _ in prepared]   # half the gap on each part keeps them the gap apart
+    # a hole no part could go in — a dowel hole, a slot: smaller than the smallest part with its share of the gap — is
+    # filled before the outline is cut into convex pieces: each hole is a notch to that cut, and a stacked slice with
+    # thirty dowel holes blew past the piece cap and became its hull, which covered the big hollow in its middle
+    # that the small parts should have gone into
+    least = min(g.area for g in grown_all) if grown_all else 0.0
     sheets = [Sheet(W, H, margin)]
     for i in order:
         pc, rot0 = prepared[i]
-        grown = pc.nest_shape.buffer(half + TOL, join_style=1)             # half the gap on each part keeps them the gap apart
+        grown = _fill_small_holes(grown_all[i], least)
         # Douglas-Peucker, not the topology-preserving simplifier: GEOS 3.12 — the one Pyodide ships, so the browser
         # build — now and then throws "orientationIndex encountered NaN" from that one on a perfectly finite outline
         # (it reads memory it never wrote; the desktop's GEOS 3.13 does not). Both keep every point within TOL, which
@@ -377,7 +399,7 @@ def place_labels(sh, font, tag="", place="part"):
         forms = [(size, False) for size in sizes[:2]] + ([(size, True) for size in sizes[:2]] if tag else []) + [(sizes[2], False)] + ([(sizes[2], True)] if tag else [])
         spot = None
         if place != "beside":                                       # on the part
-            for size, short in forms if place == "on" else forms[:-2]:
+            for size, short in forms:                             # down to two thirds of the font: a peg's name along the peg
                 w, h = label_box(text(pc, short), size)
                 spot = fit_on_part(pc.placed, guides, w, h, keep, angles, room=0.0 if place == "on" else min(2.0, 0.3 * size))
                 if spot:

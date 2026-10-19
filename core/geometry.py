@@ -358,3 +358,33 @@ def poly_coords(mp: MultiPolygon) -> list:
 
 def line_coords(ml) -> list:
     return [list(map(list, np.round(np.asarray(l.coords), 4))) for l in as_lines(ml).geoms]
+
+
+def thin_spots(region, mf):
+    """The parts of `region` too thin for too long to survive the cutter or the hand — the point of a slice that
+    meets the surface at a grazing angle, a wall left between a slot and the edge — as polygons: what an opening
+    (erode, then dilate) takes off, kept where it runs long enough to matter. Two sizes: thinner than `mf` for 2 × `mf`,
+    or thinner than 1.5 × `mf` for 4 × `mf` and at least three times as long as wide (a spike, not the scalloped edge
+    of a scanned model, whose every shallow wave the wider opening takes a shaving off). A square or 45° corner loses
+    less than that and is not one. A bridge thinner than `mf` between two bodies is also among them; `trim_thin`
+    leaves those alone (see there)."""
+    out = []
+    for w, length, ratio in ((mf, 2 * mf, 0.0), (1.5 * mf, 4 * mf, 3.0)):
+        opened = region.buffer(-w / 2).buffer(w / 2 + 0.05)
+        for piece in as_multi(region.difference(opened)).geoms:
+            a, b = min_dims(piece)
+            if piece.area > 0.1 * w * w and b >= length and b >= ratio * a and not any(piece.intersects(q) for q in out):   # one spot, not one per size
+                out.append(piece)
+    return out
+
+
+def trim_thin(region, mf):
+    """`region` with its thin tips and slivers cut off — a blunt end where the point was, a slot open to the edge
+    where the wall beside it was — and how many went. A thin spot whose removal would split the region (a bridge)
+    stays: that is a part in two pieces, which the check reports as such."""
+    n = 0
+    for piece in thin_spots(region, mf):
+        cut = as_multi(region.difference(piece.buffer(0.02, join_style=2)))
+        if len(cut.geoms) == len(region.geoms) and not cut.is_empty:
+            region = cut; n += 1
+    return region, n

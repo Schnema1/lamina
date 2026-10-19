@@ -4,7 +4,7 @@ What changed in each release. The GitHub release for a version is this section, 
 
 ## Unreleased
 
-The release for the laser: every label in a single-stroke font, dowels named after their slices and numbered beside their holes, labels that keep clear of parts and of each other, orientation arrows, a four-letter short name, and non-uniform spacing drawn as a curve in every technique, with a graph to draw it. Folded nets got seam numbers that can be read and hinge lines for their tabs, the SVG keeps each part with its labels, and the assembly video names each part as it goes in.
+The release for the laser: every label in a single-stroke font, dowels named after their slices and numbered beside their holes, labels that keep clear of parts and of each other, orientation arrows, a four-letter short name, and non-uniform spacing drawn as a curve in every technique, with a graph to draw it, and a stacked stack can be shifted to land a slice on a feature. Thin tips and slivers are found and can be trimmed off, small parts go into the hollows of big ones, and the first sheet is filled before the second. Folded nets got seam numbers that can be read and hinge lines for their tabs, the SVG keeps each part with its labels, and the assembly video names each part as it goes in.
 
 ### Added
 
@@ -19,7 +19,18 @@ The release for the laser: every label in a single-stroke font, dowels named aft
   at the foot, shoulder and lip), `ripple` (interlocked, one family following a ripple that tightens), `berry`
   (radial, the planes crowding the bumpy side) and `hook` (curve, ribs close round the bend). Slices a curve puts
   closer than the material are an error, with the pair named.
-
+- **Stacked: shift the stack.** A new `shift` parameter moves every slice plane along the axis by the same amount,
+  so one slice lands on a feature of the model — a rim, a shoulder, the middle of a hole — instead of wherever the
+  even spacing put the nearest one. Laid by distance, the stack is laid again from the shifted start, one slice after
+  another over the model; by count or along a spacing curve the slices keep their spacing, and one moved past an end of
+  the model is left out, with a note, and two that a thick slice among them makes overlap are an error that names
+  the pair.
+- **Thin spots found, and trimmed on request.** A part with a tip or a sliver too thin for too long — the point of a
+  radial slice where it meets the surface at a grazing angle, the wall left between a slot and the edge — is
+  warned about, with what would break off and how long it is; the cylinder's 0.7 mm walls beside its end slots and
+  the cone's points passed every check before. A new `trim thin spots` switch (`trim_thin`, among the fixes the
+  warning offers) cuts them off: the part ends blunt there, a little short of the model, and the plan says how
+  many spots went. The cone, blob and cylinder examples open with it on.
 - **Dowels named after their slices, and marked beside their holes.** A connector is named after the lower of the
   two slices it joins and a letter: `Z-3a` is dowel *a* between `Z-3` and `Z-4`, and `3a` is engraved beside its
   hole on both slices. Read a slice's holes by their numbers: one below the slice's own takes the rod from below, its
@@ -29,7 +40,6 @@ The release for the laser: every label in a single-stroke font, dowels named aft
   `P-1`, `P-2` … in cut order). The assembly key lists every rod with its ends and its length. Marks — these and the
   seam numbers of folded panels — now turn with their part on the sheet, so a mark placed beside a hole stays beside
   it however the part was nested, and a hole is never cut through a mark engraved before it.
-
 - **Orientation arrows.** A new sheet option (`orient_mark`) engraves two small arrows at the middle of every part,
   with the labels: a long one up the part's frame and a short one to its right, the same two directions on every
   part of the model, so a part turned on the sheet or laid face down is seen at once — the engraved face is the front.
@@ -61,7 +71,6 @@ The release for the laser: every label in a single-stroke font, dowels named aft
   put on the part anyway and counted in the notes. The sheet title is engraved inside the top margin at a size that
   fits it, where it used to run into the parts, and the one-file-per-part export engraves the label exactly where
   the sheet does.
-
 - **Labels in a single-stroke font.** Every engraved text in the cut files — part labels, seam numbers, the sheet
   title — is now drawn in a stroke font (Hershey Simplex): each letter is a few open lines the laser engraves in one
   pass, the same lines in SVG, DXF, PDF and EPS. Text used to be left as text, which the laser's software filled with
@@ -81,6 +90,15 @@ The release for the laser: every label in a single-stroke font, dowels named aft
   nested with the room for its name reserved beside it, so the label sits next to the part on a packed sheet
   instead of wherever a gap was left: the wavy torus's 68 spacers had their labels up to 35 cm away, now within
   10 mm. The last resort may use the sheet's margin band, where the title already is.
+- **Small parts go into the holes of big ones.** A hollow model's slices are rings with a wide empty middle, and the
+  nester left those middles empty: each dowel hole counted as a notch when the outline was cut into convex pieces
+  for the no-fit polygons, a slice with thirty of them blew past the cap and was treated as its hull, which
+  covered the middle. Holes too small for any part to go in are filled before that cut, so the bunny's small
+  parts now sit inside its big slices.
+- **A peg's name on the peg.** A part too narrow for its label at the font or a little under went beside with a
+  leader line, and a column of fourteen pegs on the tube's sheet had fourteen lines crossing each other to
+  names turned every which way. The label now goes on the part down to two thirds of the font, the size the
+  nester already reserved room for, so a peg carries its own name along its length.
 - **The first sheet is filled before the second.** When the polygon nest and the plain rectangle packing need the
   same number of sheets, the one that leaves less for the last sheet is kept: the tube's seven 3 mm rings went
   five, two (the second row dropped into the valleys of the first and lost a column), now six and one.

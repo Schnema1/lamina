@@ -12,7 +12,7 @@ from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
-from .geometry import (dowel_leverage, hole_reach, into, line_segments_in_mesh, min_dims, plane_plane_line, rect_along,
+from .geometry import (dowel_leverage, hole_reach, into, line_segments_in_mesh, min_dims, plane_plane_line, rect_along, thin_spots,
                        to_local, to_world)
 
 HELD_GROUPS = ("X", "Y", "R", "C")     # regions in these groups must be held by a slot / dowel / the core
@@ -40,6 +40,16 @@ def check_slice(sl, p):
             (sl.warnings if glued_island else sl.errors).append(f"{tag} too small ({small:.1f}×{large:.1f} mm < {mp} mm) — {'a tiny glued island: fiddly to handle, round / thicken the model to merge it' if glued_island else 'too small to cut and handle: delete it, enlarge the model, or lower min_part'}")
         elif small < mf:
             (sl.warnings if glued_island else sl.errors).append(f"{tag} too thin ({small:.1f} mm < {mf} mm) — it would break: {spacer or 'thicken / round the model, use thicker material, or delete it'}")
+        # tips and slivers: a point where the plane meets the surface at a grazing angle, a wall left between a slot
+        # and the edge — thinner than the min feature and long, they snap at the cutter or in the hand
+        # (a sectioned part with `trim_thin` on has had them cut off already; what is left is a bridge, reported below)
+        trims = sl.group in STRUCTURAL
+        thin = [] if trims and p.get("trim_thin") else thin_spots(reg, mf)
+        if thin:
+            longest = max(min_dims(q)[1] for q in thin)
+            sl.warnings.append(f"{tag} has {len(thin)} thin spot(s) — a tip or sliver thinner than the material can take for {longest:.0f} mm, which would break off: "
+                               + ("trim thin spots (the part ends blunt there), move the slice (offset), or thicken / round the model" if trims
+                                  else spacer or "thicken / round the model, or lower min_feature"))
         # thin necks: erode by half the min feature; anything that vanishes or fragments is fragile
         eroded = reg.buffer(-mf / 2)
         if eroded.is_empty:
@@ -314,6 +324,10 @@ def suggest_fixes(slices, p, ctx, mode):
             opts = []
             if "bridge thinner" in w:
                 opts = [grow, rnd(2)]
+            elif "thin spot" in w and sl.group in STRUCTURAL:
+                step = max(5.0, 0.1 * max(ctx.ext))
+                opts = [fix("trim thin spots off every part", trim_thin=True),
+                        fix(f"move {sl.label} {step:.0f} mm toward the centre", offset={sl.label: round(off + toward * step, 1)}), grow]
             elif "separate island" in w:
                 opts = [rnd(3, "merges it into the body")]
                 if mode.name == "stacked" and p.get("connect") == "none":

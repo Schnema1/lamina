@@ -6,7 +6,7 @@ import shapely
 import shapely.affinity
 from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
-from . import Mode, Param, register, spacing_params
+from . import MAX_SLICES, Mode, Param, register, spacing_params
 from ..model import ABC
 from ..model import Slice
 from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, mark_box, mark_rot, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
@@ -54,6 +54,7 @@ class Stacked(Mode):
         Param("distribution", "choice", "distance", "distance = one slice every thickness + space; count = N evenly spread slices", choices=["distance", "count"]),
         Param("count", "int", 10, "Number of slices", 1, 500, 1, show_if=("distribution", "count")),
         Param("space", "number", 0.0, "Empty space between consecutive slices (mm); spacers keep it", 0, 500, 0.5, unit="mm"),
+        Param("shift", "number", 0.0, "Move every slice plane along the axis by this much (mm, + towards the top), so one slice lands on a feature of the model — a rim, a shoulder, the middle of a hole: read the slice's height off the 3D view and shift by the difference. With `distance` the stack is laid out again from the shifted start, one slice after another over the model, so only the remainder at its ends is uncovered; with `count` or a spacing curve a slice moved past an end of the model is left out and the notes say so. The slices are named by their place in the stack once moved, so a setting made for one by name (a thickness, an offset) may need its name updated", -500, 500, 0.1, unit="mm", label="shift stack"),
         Param("surface", "choice", "mid", "Outline of each slice: mid = section at the middle; outer = union of the sections through the slice thickness (sand down to shape, Slicer's 3D Slices); inner = intersection (never protrudes)", choices=["mid", "outer", "inner"]),
         Param("next_outline", "bool", False, "Engrave the outline of the next layer onto each slice (GUIDE, orange): a light line showing where the layer stacked on top sits, so the stack lines up as it is glued. Drawn only where it lands on the slice's own material — a wider layer above stops at this layer's edge. Engrave, not cut; off by default", label="next layer outline"),
         Param("next_outline_offset", "number", 0.0, "Move the engraved outline in (−) or out (+) from the next layer's true edge (mm). A little negative — −0.25 or so — tucks the line under the layer above, so a glue-up a hair off still hides it; positive marks an overhang where the next layer is wider", -5, 5, 0.05, unit="mm", show_if=("next_outline", True), label="outline offset"),
@@ -83,22 +84,32 @@ class Stacked(Mode):
         p = ctx.p
         ax = "xyz".index(p["axis"]); normal = ctx.ax[ax]; up = ctx.ax[(ax + 2) % 3]
         length = ctx.ext[ax]; t = p["thickness"]; gap = p["space"]
+        name = lambda i: f"{p['axis'].upper()}-{i + 1}"
         drawn = ctx.spaced("spacing_curve", length - 2 * p["margin"], p["count"])
         if drawn is not None:                             # the spacing curve: slices where it puts them, the stack as tall as the model
-            labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(len(drawn))]
-            th = [ctx.thickness_of(l) for l in labels]; pos = [-length / 2 + p["margin"] + q for q in drawn]
+            pos = [-length / 2 + p["margin"] + q for q in drawn]
+        elif p["distribution"] == "count":
+            pos = ctx.positions(length, [t] * p["count"])
+        else:                                             # one after another, each at its own thickness
+            n = ctx.count_by_thickness(length, t, gap)
+            pos = ctx.stacked_positions(length, [ctx.thickness_of(name(i)) for i in range(n)], gap)
+        by_distance = drawn is None and p["distribution"] == "distance"
+        if p["shift"] and pos:
+            pos = self.shifted(ctx, pos, name, length, t, gap, by_distance)
+        if drawn is not None and p["shift"]:              # the graph's ticks follow the slices that are built
+            ctx.spacing[-1]["positions"] = [round(z + length / 2 - p["margin"], 3) for z in pos]
+        # a slice is named by its place in the stack, so the names are given once the planes are final (a
+        # per-slice thickness is looked up by name); laid by the curve, or moved by a shift, neighbours can overlap
+        labels = [name(i) for i in range(len(pos))]
+        th = [ctx.thickness_of(l) for l in labels]
+        if drawn is not None or p["shift"]:
             tight = [(a, b, z2 - z1) for a, b, z1, z2, t1, t2 in zip(labels, labels[1:], pos, pos[1:], th, th[1:]) if z2 - z1 < (t1 + t2) / 2 - 1e-6]
             if tight:
                 a, b, g = min(tight, key=lambda x: x[2])
-                ctx.errors.append(f"spacing curve: {len(tight)} pair(s) of slices overlap — {a} and {b} are {g:.1f} mm apart, less than the material: "
-                                  f"raise the curve there or `spacing from`, use fewer slices, or thinner material")
-        elif p["distribution"] == "count":
-            labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(p["count"])]
-            th = [ctx.thickness_of(l) for l in labels]; pos = ctx.positions(length, th)
-        else:
-            n = ctx.count_by_thickness(length, t, gap)
-            labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(n)]
-            th = [ctx.thickness_of(l) for l in labels]; pos = ctx.stacked_positions(length, th, gap)
+                why = "raise the curve there or `spacing from`, use fewer slices, or thinner material" if drawn is not None else \
+                      "use fewer slices, thinner material, or a smaller shift"
+                ctx.errors.append(f"{'spacing curve' if drawn is not None else 'shift'}: {len(tight)} pair(s) of slices overlap — "
+                                  f"{a} and {b} are {g:.1f} mm apart, less than the material: {why}")
         slices = ctx.keep([Slice(lab, "S", ctx.frame(lab, ctx.mid + normal * z, normal, up_hint=up), tk)
                            for lab, z, tk in zip(labels, pos, th)])
         self.profiles(ctx, slices)
@@ -119,6 +130,30 @@ class Stacked(Mode):
         for i, sl in enumerate(slices):
             out.append(sl); out += by_pair.get(i, [])
         return out
+
+    def shifted(self, ctx, pos, name, length, t, gap, refill):
+        """Every slice plane moved by `shift` along the axis. A stack laid by distance is laid again from the shifted
+        start: the lowest slice that fits inside the margins on the shifted grid, then one after another at each
+        slice's own thickness plus the gap, as far up as the model goes — so a shift of any size leaves the model
+        covered but for the remainder at its ends. Otherwise the slices keep their number and spacing, and one moved
+        past an end of the model inside its margins is left out, with a note."""
+        p = ctx.p; s = p["shift"]; room = length - 2 * p["margin"]
+        pos = [z + s for z in pos]
+        if refill:
+            pitch = t + gap; k0 = math.ceil((-room / 2 + t / 2 - pos[0]) / pitch - 1e-9)
+            z, out = pos[0] + k0 * pitch - t / 2, []          # the bottom face of the lowest slice
+            while len(out) < MAX_SLICES:
+                tk = ctx.thickness_of(name(len(out)))
+                if z + tk > room / 2 + 1e-6:
+                    break
+                out.append(z + tk / 2); z += tk + gap
+            if len(out) == MAX_SLICES:
+                ctx.errors.append(f"{MAX_SLICES} slices from the shifted start and the model not covered: capped — use thicker material, more space, or `count`")
+            return out
+        kept = [z for z in pos if -room / 2 < z < room / 2]
+        if len(kept) < len(pos):
+            ctx.notes_extra = " · ".join(x for x in [ctx.notes_extra, f"shift {s:g} mm: {len(pos) - len(kept)} slice(s) moved past the end of the model and left out"] if x)
+        return kept
 
     def profiles(self, ctx, slices):
         """Section each slice now (connector placement needs them); plan.build reuses `raw`."""
