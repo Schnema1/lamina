@@ -25,6 +25,7 @@ STILLS = {                            # name: (crop, width)
     "sheets": (SHEETS, 2000),
     "checks": (LEFT_MSG, 2000),
     "export": (LEFT_MSG, 2000),
+    "labels": (None, 2000),            # captured already cropped: the top-left of a cut sheet, at closeup size
 }
 JOINT = (1400, 1050)                  # every joint closeup on the same 4:3 canvas, so the gallery does not jump
 VIEW3D = (400, 44, 1570, 900)        # the viewport in "3D only" mode, which fills the height
@@ -41,6 +42,7 @@ CLIPS = {                             # name: (crop, width, fps)
     "axes": (VIEW43, 1100, 18),       # radial with an axis per lobe: the dumbbell, its neck plane moved and tilted
     "lobes": (FULL, 1200, 16),        # the plane between two lobes selected, its sliders in frame
     "square": (FULL, 1200, 16),       # a cube 8° off square, then the Model tab's square it up button
+    "spacing": (FULL, 1200, 16),      # the spacing graph under the 3D view, its middle point dragged, the vase re-sliced
 }
 
 
@@ -63,7 +65,8 @@ for name, (crop, width) in STILLS.items():
     src = SRC / f"{name}.png"
     if not src.exists():
         print("missing", src.name); continue
-    im = Image.open(src).crop(px(crop))
+    im = Image.open(src)
+    im = im.crop(px(crop)) if crop else im
     p = save(im, OUT / f"{name}.jpg", width)
     print(f"{p.name:18s} {im.width}x{im.height} -> {p.stat().st_size // 1024} KB")
 

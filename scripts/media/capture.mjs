@@ -295,6 +295,46 @@ S.edit = async () => {        // move the slice nearest the camera, so the whole
     await js("window.__t.deselect()");
 };
 
+// a point of the spacing graph dragged: the vase opens with a curve (dense at the foot, shoulder and lip); its middle
+// point is pulled down and let go, the model re-slices, then pulled back up. The graph is a 900 x 300 canvas with
+// 46 / 12 px beside and 10 / 26 px above and below the plot (spcGeom in the app)
+const spcPoint = async (t, v) => js(`(()=>{const c=document.querySelector('#spacing canvas'),r=c.getBoundingClientRect(),s=window.__t.state(),lo=+s.spacing_min,hi=+s.spacing_max;
+    return [r.left+r.width*(46+${t}*(900-58))/900, r.top+r.height*(300-26-(${v}-lo)/(hi-lo)*264)/300]})()`);
+const mouse = (type, x, y, extra = {}) => send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: 1, pointerType: "mouse", ...extra });
+S.spacing = async () => {
+    await example("vase"); await mode("stacked"); await tab("technique");
+    await params({ distribution: "count", count: 18, connect: "dowel", dowel_d: 4, n_points: 2, spacing_vary: true, spacing_min: 3, spacing_max: 30,
+                   orient_mark: true, label_place: "part" });
+    await js("window.__t.state().spacing_curve=[[0,5],[0.12,6],[0.3,16],[0.5,18],[0.72,6],[0.9,5],[1,6]]"); await set("spacing_vary", true); await settle();
+    await view(-50, 14, 1.0); await js("document.querySelector('#spacing').scrollIntoView({block:'end'})"); await sleep(300);
+    const [x0, y0] = await spcPoint(0.5, 18), [, y1] = await spcPoint(0.5, 6);
+    await clip("spacing", 56, async i => {
+        if (i === 6) await mouse("mousePressed", x0, y0, { clickCount: 1 });
+        else if (i > 6 && i <= 18) await mouse("mouseMoved", x0, y0 + (y1 - y0) * (i - 6) / 12);
+        else if (i === 19) { await mouse("mouseReleased", x0, y1, { clickCount: 1 }); await settle(); }
+        else if (i === 32) await mouse("mousePressed", x0, y1, { clickCount: 1 });
+        else if (i > 32 && i <= 44) await mouse("mouseMoved", x0, y1 + (y0 - y1) * (i - 32) / 12);
+        else if (i === 45) { await mouse("mouseReleased", x0, y0, { clickCount: 1 }); await settle(); }
+        else await sleep(120);
+    });
+    await project("spacing");
+};
+S.labels = async () => {      // the vase's cut sheet, close: names in the single-stroke font, each dowel's number beside its
+    await example("vase"); await mode("stacked"); await tab("technique");   // hole on both slices, the orientation arrows at every part's middle
+    await params({ distribution: "count", count: 18, connect: "dowel", dowel_d: 4, n_points: 2, spacing_vary: true, spacing_min: 3, spacing_max: 30,
+                   orient_mark: true, label_place: "part" });
+    await js("window.__t.state().spacing_curve=[[0,5],[0.12,6],[0.3,16],[0.5,18],[0.72,6],[0.9,5],[1,6]]"); await set("spacing_vary", true); await settle();
+    await set("viewmode", "only2d"); await sleep(700);
+    // the lower left of the first sheet, where the nester puts the parts (the top is the title and empty stock)
+    // the sheet runs past the window in the 2D-only view, in a panel that scrolls: its foot is scrolled into view
+    // first, and the crop is what is on screen
+    await js("document.querySelector('#sheets svg').scrollIntoView({block:'end'})"); await sleep(400);
+    const c = await js("(()=>{const r=document.querySelector('#sheets svg').getBoundingClientRect(),y1=Math.min(r.bottom,innerHeight)-2,y0=Math.max(r.top,y1-r.height*0.6);return {x:r.left,y:y0,width:r.width*0.62,height:y1-y0,scale:1}})()");
+    console.log("  labels crop", JSON.stringify(c));
+    await png("labels", c); console.log("shot labels", await verdict());
+    await set("viewmode", "both"); await sleep(400);
+};
+
 await send("Page.reload"); await sleep(4000);              // a fresh tab: the last run may have left it mid-request
 await until("document.querySelector('#stats').textContent.includes('parts')");
 await js("document.querySelector('#pname').value='Lamina demo';document.querySelector('#pname').dispatchEvent(new Event('input'))");
