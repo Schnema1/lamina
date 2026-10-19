@@ -29,7 +29,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 | Original | Status | Notes |
 |---|---|---|
 | Slice Direction gizmo (any angle, reset) | ✅ | `rotate` (three angles) turns the whole model, `center` moves the slicing axis / grid; per-slice `tilt` / `roll`, `rotate_grid` on top; "original size" resets |
-| Stacked Slices: direction, by count / by distance | ✅ | `axis`, `distribution`, `count`; plus `space` (empty space between slices) |
+| Stacked Slices: direction, by count / by distance | ✅ | `axis`, `distribution`, `count`; plus `space` (empty space between slices) and `shift` (move every slice plane along the axis, to land one on a feature) |
 | Stacked: dowels (diameter, 6 shapes) | ✅ | `connect=dowel`, 6 hole shapes; `connect=tab` = flat pegs, or tabbed spacers when `space` > 0 |
 | Stacked: dowel placement by clicking in 3D, Automatic, delete | ✅ | alt-click a part = add a point there, alt-click a point = remove; `placement` aligned / random per pair / along your 3D `lines`. Aligned dowels hold each layer from near its edge: how well is measured per piece (how far it reaches from its dowels' middle over their widest spacing, `dowel_leverage`), a layer the shared rods do not hold gets its own spread, and the Checks tab names the dowel that would hold a piece still bunched, with a button. Dowels you add come on top of `n_points` |
 | Interlocked Slices: 2 families, counts, direction, rotate | ✅ | `nx`, `ny`, `up`, `rotate`, `distribution` |
@@ -85,7 +85,8 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 |---|---|
 | Summary stats (sheets, slices, parts) | ✅ plus sheet usage % and material area |
 | Cut sheets view, click to magnify | ✅ |
-| Part labels `Axis-Slice-Part` | ✅ engraved beside the part with a leader line, after the model's name (`bunny Z-3`) so two models' parts are never mixed up; `label_model` turns that off; `label_inside` engraves the label on the part instead, under the next layer where there is one |
+| Non-uniform spacing | ✅ a spacing curve drawn under the 3D view for stacked, interlocked (one per family), radial (round the axis, periodic) and curve; the count kept or the spacings kept — not in the original |
+| Part labels `Axis-Slice-Part` | ✅ engraved beside the part with a leader line, after the model's short name (`BUNN Z-3`, `short_name` sets it) so two models' parts are never mixed up; `label_model` turns that off; by default on the part where the whole label fits, under the next layer where there is one, else beside it in free space; `label_place` forces either |
 | Automatic nesting | ✅ no-fit-polygon nesting on the part outlines after [Deepnest](https://github.com/Jack000/Deepnest) (min-rect angle plus quarter turns, lowest-left free point, parts slide into cavities and holes); a bounding-rectangle packer takes over above 150 parts, for speed |
 | Colour coding blue / green / yellow / red | ✅ OUTER / INNER / SCORE layers, plus GUIDE (orange) for the next layer's outline engraved on a stacked slice (`next_outline`); parts with errors are drawn red in the UI (3D and sheet) |
 | Prototyping (extra) | ✅ scaled 3D-print set: one flat STL per part + plate, labels engraved (groove) or cut (hole) at a minimum letter height in printed mm, placed where the part is widest and off the slots, printable minimum thickness; a print slot offset in printed mm (a clearance is not a ratio); fit tests (the job's joints on a small stand-in at five slot offsets, marked) as cut files at 1:1 for the real material and as a print for the print; every zip carries the project file that reopens the job |
@@ -101,7 +102,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started. Reference of the original: 
 | Original | Status |
 |---|---|
 | Unconnected / floating pieces | ✅ region-level assembly connectivity (slots, connectors, glued contact): floating regions and separate groups are errors; `autofix=add` adds crossing slices whose section reaches the rest (interlocked), rings or spines, and never deletes a piece; one-click fixes add a slice, move, delete the group, round the model |
-| Part too small / too narrow | ✅ `min_part`, `min_feature`, thin-neck erosion |
+| Part too small / too narrow | ✅ `min_part`, `min_feature`, thin-neck erosion; thin tips and slivers warned about and cut off with `trim_thin` |
 | Notches split a part | ✅ error: slots cut the part into loose regions |
 | Parts exceed the sheet | ✅ error (rotation considered) or auto-split with puzzle tabs, placed only where a whole tab fits (never clipped by a hole or the outline). A part over the sheet in *both* directions is cut the long way and then across; whatever still does not fit is named with the size that would, and keeps its sheet to itself instead of being nested over |
 | Multiple / overlapping notches | ✅ warning: two slots overlap each other |

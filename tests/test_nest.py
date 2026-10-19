@@ -5,10 +5,13 @@ with shapely against the plan's own placed coordinates, not against anything nes
 itself — the routing threshold is force-selected via monkeypatch so this doesn't depend on where
 MANY is currently set.
 """
+import math
 import pathlib
 
+import numpy as np
 import pytest
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 import core.nest as nest
 from core.plan import build
@@ -206,24 +209,99 @@ def test_one_sheet_is_as_long_as_the_parts_and_their_labels():
 
 
 def test_labels_inside_sit_on_their_part_and_a_lone_part_file_grows_to_hold_one(tmp_path):
-    """`label_inside`: every label is engraved on its own part — its centre inside the part's placed outline, with no
-    leader line — while the default still puts it beside the part with a leader. In the one-file-per-part export a
+    """`label_place` = on: every label is engraved on its own part — its centre inside the part's placed outline, with no
+    leader line — while `beside` puts every one beside the part with a leader. In the one-file-per-part export a
     label wider than the part (a 60 mm font on the cube's 180 mm slab) is drawn whole: the drawing grows past the part."""
     import re
     from shapely.geometry import Point
     from core.export import export
     base = {"distribution": "count", "count": 3, "autofix": "off"}
-    plan = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_inside": True})
+    plan = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_place": "on"})
     pieces = [pc for sl in plan["slices"] for pc in sl["pieces"]]
     for pc in pieces:
         x, y, _ = pc["label_pos"]
         assert Polygon(pc["placed"][0][0], pc["placed"][0][1:]).covers(Point(x, y)), pc["label"]
         assert pc["leader"] is None
-    beside = build(EXAMPLES / "cube.stl", "stacked", base)
+    beside = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_place": "beside"})
     assert all(pc["leader"] for sl in beside["slices"] for pc in sl["pieces"])
 
     x0, _, x1, _ = Polygon(pieces[0]["placed"][0][0]).bounds
     plan["params"]["font"] = 60.0                                     # "cube Z-1" at 60 mm: about 300 mm of label on a 180 mm slab
+    for pc in pieces:
+        pc["label_size"] = 60.0                                       # the size the sheet gave each label: the export engraves at it
     files = [f for f in export(plan, tmp_path, fmts=("svg",), labels=True, per_piece=True) if " Z-1 " in f.name]
-    width = float(re.search(r'viewBox="0 0 ([\d.]+) ', files[0].read_text(encoding="utf-8")).group(1))
-    assert width > 1.5 * (x1 - x0), width                             # the page is wider than the slab: the label is all on it
+    width, height = map(float, re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', files[0].read_text(encoding="utf-8")).groups())
+    assert max(width, height) > 1.5 * (x1 - x0), (width, height)    # the page outgrows the slab the way the label runs: it is all on it
+
+
+@pytest.mark.parametrize("model, mode, params", [
+    ("egg", "radial", {"count": 8, "ring_count": 5}),                                   # rings and half-slices: labels on the big ones, beside the slim ones
+    ("torus", "interlocked", {"nx": 9, "ny": 7}),                                        # slotted rings: most labels beside
+    ("cube", "stacked", {"distribution": "count", "count": 6, "placement": "random"}),   # slabs with dowel marks: labels on the parts, clear of the marks
+])
+def test_labels_sit_on_their_part_or_in_free_space_and_overlap_nothing(model, mode, params):
+    """The default placement: a label is engraved on its own part when the whole of it fits on the material, clear of
+    the holes and the marks there; otherwise it goes beside the part, inside the sheet margin, touching no part and no
+    other label, with a leader line that crosses no other part. Nothing here was short of room (no crowded note)."""
+    import shapely
+    from shapely.geometry import LineString
+    from core.geometry import label_box, label_rect, mark_box
+    plan = build(EXAMPLES / f"{model}.stl", mode, {**params, "autofix": "off"})
+    assert not [n for n in plan["notes"] if "no free spot" in n], plan["notes"]
+    font, tag, m = plan["params"]["font"], plan["label_tag"], plan["params"]["sheet_margin"]
+    W, H = plan["sheet"]
+    pieces = [pc for sl in plan["slices"] for pc in sl["pieces"]]
+    for si in range(plan["sheets"]):
+        on = [pc for pc in pieces if pc["place"][0] == si]
+        parts = {pc["label"]: shapely.union_all([Polygon(r[0], r[1:]) for r in pc["placed"]]) for pc in on}
+        rects = {pc["label"]: label_rect(*pc["label_pos"], *label_box(f"{'' if pc['label_short'] else tag} {pc['label']}".strip(), pc["label_size"])) for pc in on}
+        # room for every one in full or at four fifths — on the part, or right beside it, which wins over a full one
+        # farther away — or at two thirds on the part itself (a narrow ring's name along the ring, rather than a line to it)
+        assert all(pc["label_size"] >= 0.8 * font - 1e-9 or (pc["leader"] is None and pc["label_size"] >= 0.65 * font - 1e-9) for pc in on), \
+            [(pc["label"], pc["label_size"]) for pc in on if pc["label_size"] < 0.8 * font]
+        assert all(not pc["label_short"] or pc["leader"] is None for pc in on)      # the short form only ever on the part
+        for pc in on:
+            lab, r = pc["label"], rects[pc["label"]]
+            if pc["leader"] is None:                                            # on the part: whole, and off its marks
+                assert parts[lab].buffer(0.01).covers(r), lab
+                assert all(r.disjoint(mark_box(x, y, t, font, rot + pc["place"][3])) for x, y, t, rot in pc["marks"]), lab
+                continue
+            x0, y0, x1, y1 = r.bounds
+            assert x0 >= m - 1e-6 and y0 >= m - 1e-6 and x1 <= W - m + 1e-6 and y1 <= H - m + 1e-6, (lab, r.bounds)
+            assert all(r.disjoint(g) for g in parts.values()), lab
+            assert all(r.disjoint(rects[o]) for o in rects if o != lab), lab
+            lead = LineString(pc["leader"])
+            assert all(lead.disjoint(g) for o, g in parts.items() if o != lab), lab
+            assert parts[lab].distance(lead) < 1e-3                             # it points at its own part
+
+
+def test_seven_rings_fill_the_first_sheet_before_the_second():
+    """Seven 180 mm rings on 600 × 400: the polygon nest drops the second row into the valleys of the first and fits
+    five, the plain rectangle packing six. Same sheet count either way, so the one that leaves less for the last
+    sheet is kept — the first sheet full, the second with the rest (the tube example had five, two and one)."""
+    from types import SimpleNamespace
+    from shapely.geometry import Point
+    from core.geometry import as_multi
+    from core.model import Piece
+    stock = SimpleNamespace(thickness=3)
+    rings = [Piece(f"Z-{i + 1}", as_multi(Point(0, 0).buffer(90).difference(Point(0, 0).buffer(80))), stock) for i in range(7)]
+    assert nest.nest(rings, (600, 400), gap=3, margin=5) == 2
+    assert sorted(pc.place[0] for pc in rings) == [0] * 6 + [1]
+
+
+def test_a_disc_nests_inside_a_ring_full_of_dowel_holes():
+    """A hollow model's slice is a ring with a wide middle and a dowel hole every few degrees along its band. Each
+    hole was a notch to the convex decomposition behind the no-fit polygons; past the piece cap the ring became its
+    hull and its middle was lost. The small holes are filled before that cut, and the disc goes in the middle."""
+    from types import SimpleNamespace
+    from shapely.geometry import Point
+    from core.geometry import as_multi
+    from core.model import Piece
+    stock = SimpleNamespace(thickness=3)
+    band = Point(0, 0).buffer(40).difference(Point(0, 0).buffer(30))
+    holes = [Point(35 * math.cos(a), 35 * math.sin(a)).buffer(1.5) for a in np.linspace(0, 2 * math.pi, 30, endpoint=False)]
+    ring = Piece("ring", as_multi(band.difference(unary_union(holes))), stock)
+    disc = Piece("disc", as_multi(Point(0, 0).buffer(25)), stock)
+    assert len(ring.geom.geoms[0].interiors) == 31
+    assert nest.nest([ring, disc], (100, 100), gap=2, margin=0) == 1
+    assert ring.placed.geoms[0].interiors[0].envelope.contains(disc.placed) or any(Polygon(i).contains(disc.placed) for i in ring.placed.geoms[0].interiors)

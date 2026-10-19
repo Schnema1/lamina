@@ -57,29 +57,35 @@ def test_per_piece_export_merges_identical_pieces_with_a_quantity(tmp_path):
 
 
 def test_parts_carry_the_model_name_and_the_cut_list_their_size(tmp_path):
-    """Two models have the same part names, so every engraved label starts with the model's (cube Z-1 beside egg Z-1),
-    and the cut list gives each part's width × height in the export's units. A name from someone else's file is
-    cleaned before it is engraved: a bracket would break the EPS string it is written into."""
+    """Two models have the same part names, so every engraved label starts with the model's short name (CUBE Z-1 beside
+    EGG Z-1): up to four characters, the initials of a name of several words, or what `short_name` says. The cut list
+    gives each part's width × height in the export's units. A name from someone else's file is cleaned before it is
+    engraved: letters and digits only."""
     base = {"distribution": "count", "count": 4, "autofix": "off", "connect": "none"}
     plan = build(EXAMPLES / "cube.stl", "stacked", base)
     export(plan, tmp_path / "mm", fmts=("svg",), labels=True, per_piece=True)
-    assert ">cube Z-1 ×4<" in (tmp_path / "mm" / f"{design_name(plan)} Z-1 x4.svg").read_text(encoding="utf-8")
+    assert 'data-text="CUBE Z-1 ×4"' in (tmp_path / "mm" / f"{design_name(plan)} Z-1 x4.svg").read_text(encoding="utf-8")
     rows = (tmp_path / "mm" / f"{design_name(plan)} cut-list.txt").read_text(encoding="utf-8").splitlines()
     assert "size (mm)" in rows[0] and any(r.startswith(f"{design_name(plan)} Z-1 x4") and "180.0 × 180.0" in r for r in rows), rows
     assert any(r.startswith(f"{design_name(plan)} scale-check") and "100.0 × 12.0" in r for r in rows), rows
     export(plan, tmp_path / "in", fmts=("svg",), labels=True, per_piece=True, units="in")
     assert "7.087 × 7.087" in (tmp_path / "in" / f"{design_name(plan)} cut-list.txt").read_text(encoding="utf-8")   # 180 mm in inches
     export(plan, tmp_path / "sheet", fmts=("svg",), labels=True)
-    assert (tmp_path / "sheet" / f"{design_name(plan)} sheet1.svg").read_text(encoding="utf-8").count(">cube Z-") == 4
+    assert (tmp_path / "sheet" / f"{design_name(plan)} sheet1.svg").read_text(encoding="utf-8").count('data-text="CUBE Z-') == 4
 
     odd = build(EXAMPLES / "cube.stl", "stacked", {**base, "project": "my (final) \\ cube"})
-    assert odd["label_tag"] == "my final cube"
-    export(odd, tmp_path / "odd", fmts=("eps",), labels=True, per_piece=True)
-    assert "(my final cube Z-1 ×4)" in (tmp_path / "odd" / f"{design_name(odd)} Z-1 x4.eps").read_text(encoding="latin-1")
+    assert odd["label_tag"] == "MFC"
+    export(odd, tmp_path / "odd", fmts=("eps", "svg"), labels=True, per_piece=True)
+    assert 'data-text="MFC Z-1 ×4"' in (tmp_path / "odd" / f"{design_name(odd)} Z-1 x4.svg").read_text(encoding="utf-8")
+    assert "lineto" in (tmp_path / "odd" / f"{design_name(odd)} Z-1 x4.eps").read_text(encoding="latin-1")
+
+    given = build(EXAMPLES / "cube.stl", "stacked", {**base, "short_name": "sculpture #12"})
+    assert given["label_tag"] == "SCUL"                                   # a one-word name: its first four letters, capitals
+    assert build(EXAMPLES / "cube.stl", "stacked", {**base, "short_name": "ab"})["label_tag"] == "AB"
 
     off = build(EXAMPLES / "cube.stl", "stacked", {**base, "label_model": False})
     export(off, tmp_path / "off", fmts=("svg",), labels=True, per_piece=True)
-    assert off["label_tag"] == "" and ">Z-1 ×4<" in (tmp_path / "off" / f"{design_name(off)} Z-1 x4.svg").read_text(encoding="utf-8")
+    assert off["label_tag"] == "" and 'data-text="Z-1 ×4"' in (tmp_path / "off" / f"{design_name(off)} Z-1 x4.svg").read_text(encoding="utf-8")
 
 
 def test_mirror_ok_merges_a_part_with_its_mirror_image(tmp_path):
@@ -161,3 +167,14 @@ def test_split_tabs_interlock_on_a_plain_bar():
     ha = as_multi(a.intersection(box(150.02, -big, big, big))); hb = as_multi(b.intersection(box(-big, -big, 149.98, big)))
     assert len(ha.geoms) >= 2 and len(hb.geoms) >= 2                  # tabs on both sides
     assert a.intersection(b).area < 1e-6 and abs(a.area + b.area - profile.area) < 1e-6
+
+
+def test_a_split_never_leaves_a_loose_piece():
+    """The tall bar, interlocked and too tall for the sheet, is split into strips; the cut used to be free to fall
+    where the other family's slots end, and the lower half came apart into three pieces, one a small triangle held by
+    nothing. Every strip of every slice is one region, and nothing is reported loose."""
+    plan = build(EXAMPLES / "tall_bar.stl", "interlocked", {"thickness": 3, "nx": 5, "ny": 4, "autofix": "off"})
+    pieces = [(sl["label"], pc) for sl in plan["slices"] for pc in sl["pieces"]]
+    assert len(pieces) > len(plan["slices"])                            # something was split
+    assert [lab for lab, pc in pieces if len(pc["kerfed"]) != 1] == []
+    assert not [e for sl in plan["slices"] for e in sl["errors"]]

@@ -10,16 +10,28 @@ from shapely.geometry import MultiPolygon
 ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ"        # no I or O: engraved at 4 mm they are a 1 and a 0
 
 
+TAG_MAX = 4   # characters of the short name engraved before every label: room for the label itself on a small part
+
+
+def short_name(name) -> str:
+    """A name cut down to TAG_MAX capitals for engraving: the initials of its words (horse statue → HS, my final cube →
+    MFC), or the first letters of a one-word name (bunny → BUNN). ASCII letters and digits only — the name comes from
+    a file someone else chose — and I and O are allowed, since a word's initials are read as a word."""
+    words = "".join(c if c.isalnum() else " " for c in str(name)).split()
+    raw = "".join(w[0] for w in words) if len(words) > 1 else "".join(words)
+    return "".join(c for c in raw.upper() if c.isascii() and c.isalnum())[:TAG_MAX]
+
+
 def label_tag(params, model_path="") -> str:
-    """What is engraved before every part label, so parts of two models cut together are never mixed up — "bunny Z-3"
-    beside "egg Z-3". The project's name when it has one, else the model's (`model_name`, which the server sets from
-    the file as it was uploaded; the path is the fallback for the CLI). Letters, digits, - _ . and spaces only: the
-    name comes from a file someone else chose, and a bracket or backslash would break the EPS string it is written
-    into. Capped at 20 characters, so the label still fits beside a small part."""
+    """What is engraved before every part label, so parts of two models cut together are never mixed up — "BUNN Z-3"
+    beside "EGG Z-3": the `short_name` parameter when it is set, else the short form of the project's name when it
+    has one, else of the model's (`model_name`, which the server sets from the file as it was uploaded; the path is
+    the fallback for the CLI). Four characters at most, so the label still fits on a small part; the assembly key
+    says which name it stands for."""
     if not params.get("labels", True) or not params.get("label_model", True):
         return ""
-    name = params.get("project") or params.get("model_name") or (Path(model_path).stem if model_path else "")
-    return " ".join("".join(c if c.isalnum() or c in "-_." else " " for c in str(name)).split())[:20].strip()
+    given = "".join(c for c in str(params.get("short_name") or "").upper() if c.isascii() and c.isalnum())[:TAG_MAX]   # as typed, cleaned
+    return given or short_name(params.get("project") or params.get("model_name") or (Path(model_path).stem if model_path else ""))
 
 
 def label_codes(labels, seed: str) -> dict:
@@ -34,9 +46,10 @@ def label_codes(labels, seed: str) -> dict:
 
 @dataclass
 class Slice:
-    label: str                 # Slicer-style "Axis-Index" e.g. "X-3", "Z-6", "R-2a", "C-4", "P-12" (panel), "S-7" (strip)
+    label: str                 # Slicer-style "Axis-Index" e.g. "X-3", "Z-6", "R-2a", "C-4", "P-12" (panel), "S-7" (strip),
+                               # "Z-3a" (the peg or spacer a between Z-3 and Z-4: a connector is named after its lower slice)
     group: str                 # "S" stacked, "X"/"Y" interlocked families, "R" radial half-slice, "C" core disc,
-                               # "F" folded panel, "J" joint part (strip / rib), "P" alignment peg
+                               # "F" folded panel, "J" joint part (strip / rib), "P" alignment peg / spacer
     M: np.ndarray              # 4x4 local->world; slice lies on local z=0, local x/y are the drawing axes
     thickness: float
     clip: MultiPolygon | None = None    # local region to keep (radial half-plane, core disc)
@@ -47,7 +60,7 @@ class Slice:
     raw: MultiPolygon | None = None     # section ∩ clip, before cuts. Modes may set it directly (synthetic parts)
     profile: MultiPolygon | None = None # raw − cuts (what gets cut out), before kerf
     lines: list = field(default_factory=list)     # [(style, LineString)] score / fold lines (local): "mountain" | "valley"
-    marks: list = field(default_factory=list)     # [(x, y, text)] small engraved marks (local), e.g. seam numbers
+    marks: list = field(default_factory=list)     # [(x, y, text) or (x, y, text, rot)] small engraved marks (local): seam and dowel numbers, rot = turned to read along an edge
     facets: list | None = None          # [(M, MultiPolygon)] for the 3D view when the part is not one flat slice (folded panels)
     pieces: list = field(default_factory=list)    # Piece objects when split
     warnings: list = field(default_factory=list)
@@ -57,6 +70,7 @@ class Slice:
     # what a technique keeps on its own slices while it builds them
     pair: int = 0                       # stacked peg / spacer: the pair of layers it sits between (assembly order)
     cutkeys: dict = field(default_factory=dict)   # stacked: (x, y, angle) → the cut there, so an aligned dowel is cut once
+    cutnames: dict = field(default_factory=dict)  # stacked: the same key → its dowel's name (Z-3a), so a rod carried up keeps its name
     inner: MultiPolygon | None = None   # stacked: raw eroded by min_feature, where a cut keeps a full wall (cached)
     dowel_room: list = field(default_factory=list)  # stacked: where a rod through this slice and a neighbour can go (checks)
     radial: np.ndarray | None = None    # radial half-slice: the way it points out from the axis
@@ -64,6 +78,8 @@ class Slice:
     pn: object = None                   # folded: the Panel this slice is cut from
     additions: list = field(default_factory=list)   # folded: tabs added to the panel's outline
     skipped: dict = field(default_factory=dict)     # folded: what → seams whose joint found no room
+    room: MultiPolygon | None = None    # folded: the panel with its tabs so far, a hair in, where a seam number may go (cached)
+    room_tabs: int = -1                 # … and how many tabs it had when that was last worked out
     reduced: int = 0                    # folded: joints made smaller than asked
     tab_facets: list = field(default_factory=list)  # folded: the tabs as the 3D view shows them, folded onto their panel
 
@@ -81,11 +97,15 @@ class Piece:
     marks: list = field(default_factory=list)     # [(x, y, text)] local
     place: tuple | None = None  # (sheet, x, y, rot) set by pack(); rot in degrees
     kerfed: MultiPolygon | None = None
+    nest_shape: MultiPolygon | None = None  # what the nester keeps clear: the kerfed outline, plus the room for a label beside a part too small to carry one
     placed: MultiPolygon | None = None      # kerf-compensated, on the sheet
     placed_lines: list = field(default_factory=list)
     placed_marks: list = field(default_factory=list)
     label_pos: tuple | None = None          # (x, y, rotation) of the label text on the sheet
+    label_size: float | None = None         # the label's capital height: the job's font, or smaller where that was all that fit
+    label_short: bool = False               # the label engraved without the model's short name: all a small part had room for
     leader: tuple | None = None             # ((x0, y0), (x1, y1)) label → part
+    crowded: bool = False                   # the label sits on the part only because no free spot beside it was found
     same: list = field(default_factory=list)     # labels of the pieces cut from this same outline (mark_identical)
     flipped: list = field(default_factory=list)  # … and of those that are its mirror image: same file, turned over
 

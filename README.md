@@ -255,7 +255,7 @@ The original's six techniques as five modes: its *3D Slices* is stacked with `su
 
 | mode | what you get | parts |
 |---|---|---|
-| `stacked` | parallel sections, touching or with an empty `space`; outline `mid` / `outer` (Slicer's 3D Slices: sand down to shape) / `inner`; connected by **dowels** (6 hole shapes), flat **pegs**, or tabbed **spacers** that keep the space; points aligned, random per pair, or along your 3D lines; `next_outline` engraves the outline of the layer above on each slice (GUIDE layer), a guide to glue the stack by, with an offset to tuck it under the layer above | `Z-n`, connectors `P-n` |
+| `stacked` | parallel sections, touching or with an empty `space`, the whole stack movable along the axis with `shift` to land a slice on a feature; outline `mid` / `outer` (Slicer's 3D Slices: sand down to shape) / `inner`; connected by **dowels** (6 hole shapes), flat **pegs**, or tabbed **spacers** that keep the space; points aligned, random per pair, or along your 3D lines; `next_outline` engraves the outline of the layer above on each slice (GUIDE layer), a guide to glue the stack by, with an offset to tuck it under the layer above | `Z-n`, connectors `P-n` |
 | `interlocked` | two slotted families, egg-crate; notch ratio / flare / relief; grid rotation; extra slices at chosen positions | `X-n`, `Y-n` |
 | `radial` | half-slices around an axis (move it with `center`, turn the fan with `angle`) locked by horizontal ring slices with radial slots; ring count or spacing. **Several axes**: a fan per lobe — an axis through each of a dumbbell's balls, one per ball of a snowman, tilted to follow it. Neighbouring lobes are parted by a flat plane between their axes — a translucent part in the 3D view that you click and move or tilt like any slice — so the fans never run into each other, and a **spine** — one full plane through every axis, cut whole and slotted into every ring — ties the lobes together: automatic, found from how the axes lie (on one line, any number; on one plane, exactly one; on no plane, an error naming the fix). Every axis is drawn in the 3D view where it passes through the model: drag it whole or by either end (it stays on the plane the other axes share, so the spine survives the drag), alt-click the model for a parallel axis through that point, `+` to split one in two, alt-click an axis to remove it | `R-na/b` (`R2-na/b` per axis), rings `Z-n`, spines `SP-n` |
 | `curve` | ribs perpendicular to a curve through the model (its centre line by default, following the body across the plane too; drag the blue dots, alt-click to add or remove one, or type them in the `curve` table), so they follow a bend instead of staying parallel; locked together by spine slices. The turn between neighbouring ribs is limited so they do not meet inside the model. **Branches**: a straight line per leg, arm or tail, each with ribs square to it and a spine of its own that reaches back into the body and slots into the body's ribs, so a horse's legs are held instead of cut across by body ribs. Shift+alt-click a hoof to add one, drag its ends, alt-click it to remove it; a branch that starts past the body's ribs is an error, not a loose leg | `R-n`, spines `K-n`; branch 2: ribs `R2-n`, spine `K2`, joint `J-2` |
@@ -293,11 +293,27 @@ does not slip through. It carries the most signal for stacked and folded work; d
   from the wrong stock fits nothing. Every file name also carries the material it is cut from (`sheet1 plywood.svg`).
 - **One sheet** ignores the sheet height: every part goes on one strip as wide as the sheet and as long as it needs,
   to be cut apart at the machine.
-- **Labels** are engraved beside the part with a leader line wherever there is room; only a fully crowded sheet puts
-  one on the part. `label_inside` puts every label on the part itself instead: inside the next layer's outline where
-  the technique marks one (stacked, `next_outline`), so the layer glued on top hides it, otherwise at the part's widest
-  spot. A label too big for a small part is still placed, past the outline if it must, for you to trim in the laser
-  software; no part ever comes out unlabelled.
+- **Non-uniform spacing**: stacked, interlocked, radial and curve can spread their slices by a curve you draw in a
+  graph under the 3D view (`spacing_vary`) — the distance between neighbours against the position along the way,
+  the angle between planes round the axis for radial (periodic), one graph per family for interlocked — dense where
+  the shape changes fast, sparse where it does not. Keep the count and the drawn spacings are scaled to span the
+  model, or keep the spacings and the count follows. The `vase`, `ripple`, `berry` and `hook` examples open with one.
+- **Labels** go on the part itself wherever the whole label fits on its material — inside the next layer's outline
+  where the technique marks one (stacked, `next_outline`), so the layer glued on top hides it, upright or turned along
+  the part, clear of its holes and marks — and otherwise beside the part with a leader line, in free space inside the
+  sheet margin that no part, label or leader crosses. `label_place` switches that to always beside (nothing engraved
+  on the parts) or always on the part (past its outline when it must, for you to trim in the laser software). Every
+  engraved text is drawn in a single-stroke font (Hershey Simplex): open lines the laser engraves in one pass, the
+  same in every format, with no font for the machine's software to find or fill. `font` is the height of a capital in
+  mm; a label with no room at that size is tried smaller, down to half, before it goes on the part anyway. No part
+  ever comes out unlabelled; a sheet with no free spot for a label says so in the notes. `orient_mark` engraves two
+  small arrows at the middle of every part, a long one up and a short one right in the part's own frame, the same
+  on every part, so a part turned or laid face down is seen at once.
+- **Dowels are named after their slices**: dowel `Z-3a` is the connector *a* between `Z-3` and `Z-4`, and the mark
+  `3a` is engraved beside its hole on both slices, so a hole marked with a number below the slice's own takes the rod
+  from below and one with its own number the rod going up. A straight rod through several slices keeps the name of the
+  slice it starts from; with tab connectors the peg or spacer is the connector and `Z-3a` is its part label. The
+  assembly key lists every rod with its two ends and its length.
 - **An assembly key** comes with the cut files (`assembly-key.txt`): what this technique's labels mean — `R-2a` is the
   *a* half of the second radial plane, `Z-3` the third ring up — then every part with its centre, what it slots onto,
   in the order the 3D view builds them. The same legend is shown in the Export tab, so the scheme is clear before the
@@ -311,7 +327,7 @@ does not slip through. It carries the most signal for stacked and folded work; d
 - **Cut files**: SVG (opens directly in LightBurn, the Glowforge app and xTool Creative Space) and DXF in mm / cm /
   in, multi-page PDF, EPS per sheet, or one file per piece, each with or without the red label layer (one switch for
   every file). Layers follow Slicer's Cut Layout: OUTER blue, INNER green (slots, holes), SCORE yellow (folds: solid mountain, dashed valley, dotted perforate), GUIDE orange (stacked: the
-  next layer's outline engraved on the slice under it, when `next_outline` is on), LABEL red (labels, leaders, seam numbers, sheet border). The zip is named `<project or model>_v<revision>_<technique>_…`, and so is every file
+  next layer's outline engraved on the slice under it, when `next_outline` is on), LABEL red (labels, leaders, seam numbers, sheet border). In the SVG each part is one group holding its own cuts, lines and labels, so it can be moved as a unit in a vector editor. The zip is named `<project or model>_v<revision>_<technique>_…`, and so is every file
   in it: they all start with the design, `egg_v1.0 sheet1 plywood.svg`, so the cut files of two designs unzipped
   into one folder never collide or mix.
 - **Identical pieces once**: in per-piece mode a shape that occurs several times is exported one time, with the
@@ -319,7 +335,8 @@ does not slip through. It carries the most signal for stacked and folded work; d
   quantity, in that order and separated by spaces, and it always ends in its quantity, `x1` included
   (`egg_v1.0 Z-1 plywood x4.svg`, `egg_v1.0 Z-2 plywood x1.svg`); a `cut-list.txt` says which parts each file
   covers and gives each part's width × height in your units.
-- **The model's name on every part**: each engraved label starts with it (`bunny Z-3`), so parts of two models cut
+- **The model's name on every part**, short: each engraved label starts with a code of up to four letters (`BUNN Z-3`,
+  `HS Y-12` for a horse statue), the initials of the project's or model's name unless `short_name` sets it, so parts of two models cut
   together are never mixed up. The project's name when it has one, else the model's file name; room for it is kept
   when the parts are nested, and `label_model` turns it off.
 - **Weight**: the Export tab weighs the parts as cut (holes and slots taken out, each part at its own thickness, one

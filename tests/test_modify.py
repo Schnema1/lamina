@@ -474,7 +474,7 @@ def test_a_new_name_reslices_without_remeshing(tmp_path):
     assert (tmp_path / "a.stl").read_bytes() == (tmp_path / "b.stl").read_bytes()
     assert a["notes"] == b["notes"] and a["bbox"] == b["bbox"] and a["coverage"] == b["coverage"]
     assert [s["extents"] for s in a["slices"]] == [s["extents"] for s in b["slices"]]
-    assert b["label_tag"] == "second"
+    assert b["label_tag"] == "SECO"
     assert "modify form: remeshing" in c["timing"] and c["bbox"] != b["bbox"]
 
 

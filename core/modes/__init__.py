@@ -22,7 +22,8 @@ MAX_SLICES = 500                      # the count slider's ceiling, and the ceil
 #   map           per-slice numbers (edited from the 3D view)   value: {label: number}
 #   labels        list of slice labels (chips)                  value: [label, …]
 #   chips         list of numbers or labels                   value: [v, …]
-LIST_TYPES = ("vec2", "vec3", "points", "lines3", "map", "labels", "chips")
+#   curve         the spacing curve, drawn in the graph under the 3D view   value: [[t, s], …] t 0..1, s mm or deg
+LIST_TYPES = ("vec2", "vec3", "points", "lines3", "map", "labels", "chips", "curve")
 
 
 @dataclass
@@ -62,6 +63,25 @@ def P(name, type, default, help="", min=None, max=None, step=None, **kw):
     return Param(name, type, default, help, min, max, step, **kw)
 
 
+def spacing_params(what, curves, lo, hi, unit="mm", count="count"):
+    """The parameters of a drawn spacing curve, for a technique whose slices are spread along an axis: the switch, the
+    curve(s) — (name, label, default points) each, drawn in the graph under the 3D view — the range the graph shows,
+    and whether the count or the curve is what is kept. `what`: what is spread (slices, ribs, planes)."""
+    u = "°" if unit == "deg" else "mm"
+    out = [P("spacing_vary", "bool", False, f"Vary the spacing of the {what} along the way: draw the distance between neighbours against the "
+             "position in the graph under the 3D view — dense where the shape changes fast, sparse where it does not. The curve between "
+             "the points never overshoots them. Off = evenly spread", label="vary the spacing")]
+    for name, label, default in curves:
+        out.append(P(name, "curve", default, f"The spacing of the {label}: control points (position 0…1 along the way, spacing in {u}), "
+                     "drawn in the graph under the 3D view", show_if=("spacing_vary", True), label=label))
+    out += [P("spacing_fix", "choice", "count", f"count = `{count}` is kept and the drawn spacings are scaled to span the model, so what is drawn "
+              f"is their proportion; curve = the spacings are cut as drawn and the number of {what} follows", choices=["count", "curve"],
+              show_if=("spacing_vary", True), label="keep", choice_labels={"count": f"the count ({count})", "curve": "the spacings as drawn"}),
+            P("spacing_min", "number", lo, f"The least spacing the curve can draw ({u}): the graph's bottom", 0.1, 10000, 0.5, unit=unit, show_if=("spacing_vary", True), label="spacing from"),
+            P("spacing_max", "number", hi, f"The most spacing the curve can draw ({u}): the graph's top", 0.2, 10000, 0.5, unit=unit, show_if=("spacing_vary", True), label="spacing to")]
+    return out
+
+
 # parameters shared by every mode
 VOXELS = (". Remeshes the model on a grid no finer than its size allows (the note after slicing gives it): curves stay "
           "curves and the value acts exactly, but detail finer than the grid is lost. All four at 0 keeps the model "
@@ -87,19 +107,26 @@ COMMON: list[Param] = [
     P("sheet_margin", "number", 5, "Keep-out from the sheet edge (mm)", 0, 100, 0.5, group="sheet", unit="mm"),
     P("gap", "number", 3, "Gap between parts on the sheet (mm)", 0, 50, 0.5, group="sheet", unit="mm"),
     P("labels", "bool", True, "Engrave part labels (LABEL layer): beside each part with a leader line, or on the part itself — see `labels on the parts`", group="sheet"),
-    P("font", "number", 4.0, "Label text height (mm)", 1, 30, 0.5, group="sheet", unit="mm"),
-    P("label_model", "bool", True, "Engrave the model's name before each label (bunny Z-3): two models have the same part names, "
+    P("font", "number", 4.0, "Height of a capital letter in the engraved labels (mm). Single-stroke lettering: the laser draws each letter as one line, not the two edges of a filled one", 1, 30, 0.5, group="sheet", unit="mm"),
+    P("short_name", "text", "", "The short name engraved before each label, up to 4 letters or digits (HS Y-12). Blank = the initials of the "
+      "project's or the model's name, or the first four letters of a one-word name (bunny → BUNN). The assembly key says what it stands for",
+      group="sheet", show_if=("label_model", True), label="short name"),
+    P("label_model", "bool", True, "Engrave the model's short name before each label (BUNN Z-3): two models have the same part names, "
       "and parts cut together would otherwise get mixed up. The project name when it has one. Off for a longer label's room "
       "beside small parts", group="sheet", show_if=("labels", True)),
     P("label_style", "choice", "position", "What the engraved label says. position = where the part belongs (Z-3, R-2a, P-7) · "
       "code = a short code that gives nothing away, for a puzzle: the app, the Parts list and the 3D view still show the real "
       "labels, and assembly-key.txt in the export maps code → part. Leave that file out of the zip and the puzzle stays a puzzle",
       choices=["position", "code"], group="sheet", show_if=("labels", True)),
-    P("label_inside", "bool", False, "Engrave each label on the part itself instead of beside it: it goes inside the "
-      "outline of the next layer where the technique marks one, so the layer glued on top hides it. A label too big for "
-      "a small part is still placed — on the part's widest spot, overrunning the outline if it must — so no part ever "
-      "comes out unlabelled: trim those in your laser software. The parts you glue last keep a visible label; remove "
-      "those there too", group="sheet", show_if=("labels", True), label="labels on the parts"),
+    P("orient_mark", "bool", False, "Engrave two small arrows at the middle of every part (LABEL layer, with the labels): a long one up the "
+      "part's frame and a short one to its right, the same two directions on every part of the model, so a part turned on the sheet "
+      "or laid face down is seen at once — the engraved face is the front. Labels keep clear of them", group="sheet", label="orientation arrows"),
+    P("label_place", "choice", "part", "Where each label is engraved. part = on the part itself where the whole label fits on "
+      "its material (inside the outline of the next layer where the technique marks one, so the layer glued on top hides it), "
+      "beside it with a line pointing at it where it does not · beside = always beside the part, on the waste, so nothing is "
+      "engraved on the parts · on = always on the part, on its widest spot, past its outline when it must: trim those in your "
+      "laser software. However placed, no part comes out without its label", choices=["part", "beside", "on"], group="sheet",
+      show_if=("labels", True), label="labels go"),
     # -- fit: three things that are easy to take for one. Only the kerf is switched by `compensate`; the slot fit and the
     # corners always apply, and the form says so in each section's line (reported: "if compensate is off, it feels like
     # none of the parameters below apply")
@@ -164,6 +191,7 @@ COMMON: list[Param] = [
     P("autofix", "choice", "add", "add = hold what nothing holds the way this technique holds things (crossing slices, rings, spines; up to 2 rounds); off = report only. Nothing of the model is ever taken away: what still cannot work stays, with its error and the fixes to click, deleting among them. Everything done is listed in the report", choices=["add", "off"], group="checks"),
     P("min_feature", "number", 2.0, "Check: minimum wall / feature width (mm)", 0.1, 50, 0.1, group="checks", unit="mm"),
     P("min_part", "number", 6.0, "Check: parts smaller than this (mm) in both directions are flagged", 0.5, 100, 0.5, group="checks", unit="mm"),
+    P("trim_thin", "bool", False, "Cut off what is too thin for too long to survive the cutter or the hand — thinner than min_feature for twice that length, or a spike under 1.5 × min_feature for four times it: the sharp point of a slice that meets the surface at a grazing angle, the wall left between a slot and the edge. The part ends blunt there, a little short of the model; off, each such spot is a warning on its part", group="checks", label="trim thin spots"),
 ]
 
 
@@ -231,6 +259,7 @@ class Ctx:
         # what the technique hands the 3D view: dowel rods, a curve and its points, fan axes / branches, the planes between lobes
         self.rods, self.curve3d, self.curve_pts, self.axes3d, self.bounds3d = [], None, None, None, []
         self.core_d_min = None    # radial: the smallest core the half-slices allow
+        self.spacing = []         # the drawn spacing curves' outcome, for the graph: [{param, positions, length, unit, scale}]
         self.stack, self.common_pts = [], None   # stacked: the layers in order, and the dowel points they all share (cached)
 
     def override(self, key, label, default=0.0):
@@ -242,6 +271,22 @@ class Ctx:
 
     def thickness_of(self, label):
         return self.override("thick", label, self.p["thickness"])
+
+    def spaced(self, param, length, count, periodic=False, unit="mm"):
+        """Positions from the drawn spacing curve `param` along `length` (0 at the start), or None when the spacing is
+        even: `count` of them with `spacing_fix` = count, else as many as the curve gives (up to MAX_SLICES). What
+        it gave goes to the plan, for the graph's ticks and the note about the scale."""
+        from ..spacing import spaced
+        p = self.p
+        if not p.get("spacing_vary"):
+            return None
+        pos, k = spaced(p[param] or [], length, p["spacing_min"], max(p["spacing_max"], p["spacing_min"] + 1e-6),
+                        count if p["spacing_fix"] == "count" else None, periodic, MAX_SLICES)
+        self.spacing.append({"param": param, "positions": [round(float(q), 3) for q in pos], "length": float(length), "unit": unit, "scale": round(float(k), 4)})
+        if abs(k - 1) > 0.5 and p["spacing_fix"] == "count":
+            self.notes_extra = " · ".join(x for x in [self.notes_extra, f"spacing curve ({param}): the count and the drawn spacings disagree — "
+                                                      f"the curve is scaled {k:.2f}× to fit {len(pos)}; change the count or the curve"] if x)
+        return pos
 
     def frame(self, label, origin, normal, up_hint=(0, 0, 1)):
         """Slice frame with the user's per-slice edits applied: offset along the normal, tilt/roll about the in-plane

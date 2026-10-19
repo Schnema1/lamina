@@ -1186,3 +1186,47 @@ def test_a_phone_is_told_once_that_lamina_is_made_for_a_computer(page, server):
         assert not pg.errors, pg.errors
     finally:
         ctx.close()
+
+
+def test_the_spacing_graph_follows_the_technique_and_the_switch(page):
+    """An example that opens with a spacing curve shows the graph under the 3D view — one per family for interlocked —
+    and the plan carries the positions it drew; the switch off hides it and the slices go back to even."""
+    page.click('nav button[data-t="model"]')
+    page.select_option("#example", "vase"); settle(page)
+    assert not page.evaluate("() => document.getElementById('spacing').hidden")
+    assert page.evaluate("() => document.querySelectorAll('#spacing canvas').length") == 1
+    assert plan(page)["spacing"] and plan(page)["params"]["spacing_vary"]
+    page.select_option("#example", "ripple"); settle(page)
+    assert page.evaluate("() => document.querySelectorAll('#spacing canvas').length") == 2    # x and y families
+    page.click('nav button[data-t="technique"]')
+    set_fields(page, [["p_spacing_vary", False]]); settle(page)
+    assert page.evaluate("() => document.getElementById('spacing').hidden")
+    assert not plan(page).get("spacing")
+
+
+def test_the_short_name_field_sets_what_the_labels_start_with(page):
+    """The model's name on every label is a code of up to four letters: derived from the name, or typed in the
+    short name field, which is kept to letters and digits, in capitals, cut to four; the sheet's labels start with it."""
+    assert plan(page)["label_tag"] == "EGG"
+    page.click('nav button[data-t="sheet"]')
+    set_fields(page, [["p_short_name", "m-e o"]]); settle(page)
+    assert plan(page)["label_tag"] == "MEO"
+    set_fields(page, [["p_short_name", "abcdefg"]]); settle(page)
+    assert plan(page)["label_tag"] == "ABCD"
+    texts = page.evaluate("() => [...document.querySelectorAll('#sheets path[data-text]')].map(p => p.dataset.text)")
+    labels = [t for t in texts if " R-" in t]                                   # the parts' labels, not the title or the scale check
+    assert labels and all(t.startswith("ABCD ") for t in labels), labels[:5]
+
+
+def test_the_build_order_names_the_part_going_in(page):
+    """Part way along the steps slider the 3D view carries the step and the name of the part going in, at the top,
+    so a recording of the build order says what each piece is; at the end nothing is shown."""
+    n = int(page.get_attribute("#steps", "max"))
+    assert n > 2
+    page.evaluate("k => { const e = document.getElementById('steps'); e.value = k; e.dispatchEvent(new Event('input')) }", n // 2)
+    page.wait_for_timeout(300)
+    text = page.evaluate("() => window.__t.banner()")
+    assert text.startswith(f"step {n // 2} / {n}") and "EGG " in text, text
+    page.evaluate("k => { const e = document.getElementById('steps'); e.value = k; e.dispatchEvent(new Event('input')) }", n)
+    page.wait_for_timeout(300)
+    assert page.evaluate("() => window.__t.banner()") == ""

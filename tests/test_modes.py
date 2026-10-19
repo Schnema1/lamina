@@ -430,3 +430,109 @@ def test_autofix_adds_interlocked_slices_a_full_wall_from_the_others(model):
             gaps = [abs(q - x) for q in d if abs(q - x) > 1e-3]
             assert min(gaps) >= need - 0.05, f"{fam} slice added at {x} mm, {min(gaps):.1f} mm from another"
     assert added, "this model needs auto-fix's slices; the test means nothing without them"
+
+
+def test_connectors_are_named_after_their_lower_slice_and_marked_beside_their_holes():
+    """A dowel is Z-3a: the lower of the two slices it joins and a letter, marked 3a beside its hole on both slices,
+    so every hole on a slice says which rod it takes — a number below the slice's own, the rod from below; its own
+    number, the rod going up. A straight rod through several slices keeps the name of the slice it starts from; with
+    tab connectors the peg is the connector and carries the name as its part label. The assembly key lists every
+    rod with its two ends."""
+    from core.export import key_text
+    plan = build(EXAMPLES / "egg.stl", "stacked", {"distribution": "count", "count": 5, "placement": "random", "n_points": 2, "autofix": "off"})
+    assert [r[5] for r in plan["rods"]] == ["Z-1a", "Z-1b", "Z-2a", "Z-2b", "Z-3a", "Z-3b", "Z-4a", "Z-4b"]
+    by = {sl["label"]: sl for sl in plan["slices"]}
+    marks = lambda sl: [m[2] for pc in sl["pieces"] for m in pc["marks"]]
+    for _, _, _, _, _, name, lo, hi in plan["rods"]:
+        assert all(name.split("-", 1)[1] in marks(by[s]) for s in (lo, hi)), name
+    for sl in plan["slices"]:                                                      # every hole marked, once
+        holes = sum(len(region) - 1 for pc in sl["pieces"] for region in pc["placed"])
+        assert holes == len(marks(sl)) == len(set(marks(sl))), (sl["label"], marks(sl))
+    assert marks(by["Z-3"]) == ["2a", "2b", "3a", "3b"]
+    key = key_text(plan)
+    assert "Z-3a      Z-3       Z-4" in key and "Dowels" in key
+
+    plan = build(EXAMPLES / "cube.stl", "stacked", {"distribution": "count", "count": 4, "autofix": "off"})   # aligned: two rods, the whole stack
+    assert {r[5] for r in plan["rods"]} == {"Z-1a", "Z-1b"}
+    assert all(marks(sl) == ["1a", "1b"] for sl in plan["slices"])
+    assert "Z-1a      Z-1       Z-4" in key_text(plan)
+
+    plan = build(EXAMPLES / "egg.stl", "stacked", {"distribution": "count", "count": 4, "connect": "tab", "space": 4, "dowel_d": 6, "autofix": "off"})
+    pegs = [sl["label"] for sl in plan["slices"] if sl["group"] == "P"]
+    assert pegs[:2] == ["Z-1a", "Z-1b"] and all(sl["label"].startswith("Z-") for sl in plan["slices"])
+    assert marks(next(sl for sl in plan["slices"] if sl["label"] == "Z-1")) == ["1a", "1b"]
+
+
+def test_folded_seam_numbers_sit_on_material_clear_of_cuts_and_folds_and_tabs_fold_at_their_base():
+    """A seam number is only engraved where the whole of it lies on the panel (or its tab), clear of the cut edges,
+    the fold lines and the other numbers; a hinge is scored across each tab's base alone, never along the seam under
+    a cut. A seam with no room for its number says so in the panel's warnings instead of engraving it over a fold."""
+    from shapely.geometry import LineString, MultiPolygon, Polygon
+    from core.geometry import mark_box
+    plan = build(EXAMPLES / "cube.stl", "folded", {"size": [90, 0, 0], "joint": "ticked", "facet": 0, "inset": 6, "spacing": 30,
+                                                   "thickness": 1, "autofix": "off"})
+    font = plan["params"]["font"]
+    seen, numbers = 0, set()
+    for sl in plan["slices"]:
+        for pc in sl["pieces"]:
+            geom = MultiPolygon([Polygon(r[0], r[1:]) for r in pc["placed"]])
+            lines = [(s, LineString(pts)) for s, pts in pc["lines"]]
+            boxes = [mark_box(x, y, t, font, rot) for x, y, t, rot in pc["marks"]]
+            for b in boxes:
+                assert geom.buffer(-0.25).covers(b)                                   # on the material, off the edge
+                assert all(not b.intersects(ln) for _, ln in lines)                   # across no fold line
+            assert all(not a.intersects(b) for i, a in enumerate(boxes) for b in boxes[i + 1:])
+            for _, ln in lines:
+                assert geom.buffer(0.05).covers(ln) and ln.intersection(geom.boundary).length < 0.5   # inside, not along a cut
+            seen += len(boxes); numbers |= {t for _, _, t, _ in pc["marks"]}
+    left_off = sum(int(w.split()[0]) for sl in plan["slices"] for w in sl["warnings"] if "seam number(s) left off" in w)
+    assert len(numbers) >= 7 and seen + left_off == 2 * len(numbers)                     # every seam numbered on both sides, or counted
+
+
+def test_orientation_arrows_are_two_lines_inside_every_part_clear_of_its_marks():
+    """`orient_mark` engraves two arrows at the middle of each part, the same two directions on every part, inside the
+    material and touching no dowel number; off, a part carries none."""
+    from shapely.geometry import LineString, MultiPolygon, Polygon
+    from core.geometry import mark_box
+    params = {"distribution": "count", "count": 3, "autofix": "off", "connect": "dowel"}
+    on = build(EXAMPLES / "cube.stl", "stacked", {**params, "orient_mark": True})
+    off = build(EXAMPLES / "cube.stl", "stacked", params)
+    assert not [s for sl in off["slices"] for pc in sl["pieces"] for s, _ in pc["lines"] if s == "orient"]
+    font = on["params"]["font"]
+    for sl in on["slices"]:
+        for pc in sl["pieces"]:
+            geom = MultiPolygon([Polygon(r[0], r[1:]) for r in pc["placed"]])
+            arrows = [LineString(pts) for s, pts in pc["lines"] if s == "orient"]
+            assert len(arrows) == 4, sl["label"]                      # two arrows: a shaft and a head each
+            for a in arrows:
+                assert geom.buffer(-0.3).covers(a)
+                assert all(not a.intersects(mark_box(x, y, t, font, rot)) for x, y, t, rot in pc["marks"])
+
+
+def test_stacked_shift_moves_every_slice_plane_and_keeps_the_model_covered():
+    """`shift` moves every slice plane along the axis by the same amount, so one slice can be put on a feature of
+    the model. Laid by distance, the stack is laid again from the shifted start and still covers the model; by count,
+    the slices keep their spacing and one shifted past the end is left out, with a note."""
+    base = {"autofix": "off", "connect": "none", "thickness": 10}
+    even = build(EXAMPLES / "cube.stl", "stacked", base)
+    moved = build(EXAMPLES / "cube.stl", "stacked", {**base, "shift": 4})
+    z = lambda plan: sorted(round(sl["M"][2][3], 3) for sl in plan["slices"])      # the frame's origin along z
+    # 18 touching slices filled the 180 mm cube exactly; shifted, the one that would stick out past the top is left off
+    assert len(z(moved)) == len(z(even)) - 1 and all(abs(b - a - 4) < 1e-6 for a, b in zip(z(even), z(moved)))
+    far = build(EXAMPLES / "cube.stl", "stacked", {**base, "shift": 37})          # more than a pitch: laid again from the shifted start
+    assert len(z(far)) == len(z(even)) - 1 and all(abs((q - z(even)[0] - 37) % 10) < 1e-6 for q in z(far))   # the shifted pitch grid
+    assert all(-85 <= q <= 85 for q in z(far)) and abs(z(far)[0] - z(even)[0] - 7) < 1e-6   # whole slices inside the model
+    by_count = {**base, "distribution": "count", "count": 6}
+    even_n = build(EXAMPLES / "cube.stl", "stacked", by_count)
+    off_end = build(EXAMPLES / "cube.stl", "stacked", {**by_count, "shift": 20})
+    assert len(z(even_n)) == 6 and len(z(off_end)) == 5                            # the top one went past the end
+    assert all(abs(b - a - 20) < 1e-6 for a, b in zip(z(even_n), z(off_end)))
+    assert any("shift 20 mm: 1 slice(s) moved past the end" in n for n in off_end["notes"])
+    # a slice of its own thickness keeps its room in the shifted stack, as it does in the unshifted one
+    thick = build(EXAMPLES / "cube.stl", "stacked", {**base, "thick": {"Z-3": 20}, "shift": 4})
+    zt = z(thick); th = {sl["label"]: sl["thickness"] for sl in thick["slices"]}
+    assert th["Z-3"] == 20 and not thick["counts"]["errors"]
+    assert all(b - a >= (th[f"Z-{i + 1}"] + th[f"Z-{i + 2}"]) / 2 - 1e-6 for i, (a, b) in enumerate(zip(zt, zt[1:])))
+    assert zt[0] == z(moved)[0]                                                     # the same shifted start
+    clash = build(EXAMPLES / "cube.stl", "stacked", {**by_count, "thick": {"Z-3": 60}, "shift": 1})   # 60 mm among 10 mm slices 30 mm apart
+    assert any("slices overlap" in e for e in clash["errors"])                       # by count, a shift reports what overlaps

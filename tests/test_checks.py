@@ -1,7 +1,10 @@
 """core.checks runs inside core.plan.build(); these tests trigger its two error conditions with real
 geometry (no synthetic Slice fixtures) and verify autofix actually clears the one it claims to fix.
 """
+import json
 import pathlib
+
+from shapely.geometry import Polygon
 
 from core.plan import build
 
@@ -107,3 +110,21 @@ def test_a_spacer_too_thin_offers_bigger_connectors_and_they_hold():
     fix = next(o["set"] for f in spacers[0]["fixes"] for o in f["options"] if "dowel_d" in o["set"])
     fixed = build(EXAMPLES / "egg.stl", "stacked", {**job, **fix})
     assert not [e for s in fixed["slices"] if s["group"] == "P" for e in s["errors"]], fix
+
+
+def test_thin_tips_and_slivers_are_warned_and_trimmed_on_request():
+    """A radial slice through a cone meets the surface at a grazing angle near the apex and ends in a point thinner
+    than the min feature for centimetres: a warning on the part, with trimming among its fixes. With `trim_thin`
+    the point is cut off blunt, the warning goes, and the plan says how many spots went."""
+    cone = EXAMPLES / "cone.stl"
+    params = {"count": 8, "ring_count": 4, "thickness": 3, "autofix": "off"}           # the example's preset
+    plan = build(cone, "radial", params)
+    thin = [(sl["label"], w) for sl in plan["slices"] for w in sl["warnings"] if "thin spot" in w]
+    assert thin and all("trim thin spots" in w for _, w in thin)
+    assert any("trim_thin" in json.dumps(f) for sl in plan["slices"] for f in sl["fixes"])
+    trimmed = build(cone, "radial", {**params, "trim_thin": True})
+    assert not [w for sl in trimmed["slices"] for w in sl["warnings"] if "thin spot" in w]
+    assert any("thin spot(s) trimmed" in n for n in trimmed["notes"])
+    area = lambda pl, lab: sum(Polygon(r[0], r[1:]).area for sl in pl["slices"] if sl["label"] == lab for pc in sl["pieces"] for r in pc["kerfed"])
+    lab = thin[0][0]
+    assert 0 < area(plan, lab) - area(trimmed, lab) < 0.05 * area(plan, lab)     # a point gone, the part otherwise whole

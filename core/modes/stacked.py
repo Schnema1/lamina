@@ -6,9 +6,10 @@ import shapely
 import shapely.affinity
 from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
-from . import Mode, Param, register
+from . import MAX_SLICES, Mode, Param, register, spacing_params
+from ..model import ABC
 from ..model import Slice
-from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
+from ..geometry import dowel, dowel_leverage, hole_reach, LEVERAGE_OK, mark_box, mark_rot, rect_along, as_multi, as_lines, section_polygons, frame_xy, into, to_local
 
 _dist = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])   # noqa: E731
 
@@ -18,6 +19,28 @@ CONNECT_HELP = ("dowel = round/square rods through holes (drawn in the 3D view),
                 "orientation · none = glue only, for a stack you are happy to line up by eye")
 
 MIN_DOWEL = 2.0            # below this a dowel is not worth cutting for: too small to buy, too weak to locate anything
+ABC_LOWER = ABC.lower()    # the letters of connector names, no i or o (they read as 1 and 0 when engraved small)
+
+
+def hole_mark(sl, hole, text, font):
+    """The dowel's mark engraved beside its hole (or a tab's slot): a box of `text` at 0.6 of the font, in the first of
+    eight directions round the hole — above first — where the whole mark lies on the slice's material, clear of the
+    outline, every cut in the slice and every mark already there. A hole with no room round it (a small island) gets
+    none: the assembly key still names it."""
+    w, h = (lambda b: (b[2] - b[0], b[3] - b[1]))(mark_box(0, 0, text, font).bounds)
+    cx, cy = hole.centroid.coords[0]
+    reach = max(math.hypot(x - cx, y - cy) for x, y in hole.exterior.coords)
+    room = sl.raw.buffer(-0.3)
+    cuts = [c.buffer(0.3) for c in sl.cuts]
+    taken = [mark_box(*m[:3], font, mark_rot(m)) for m in sl.marks]
+    for ang in (90, 270, 0, 180, 45, 135, 225, 315):
+        dx, dy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+        far = reach + 0.6 + abs(dx) * w / 2 + abs(dy) * h / 2         # the box's edge nearest the hole 0.6 mm from it
+        x, y = cx + dx * far, cy + dy * far
+        b = mark_box(x, y, text, font)
+        if room.covers(b) and all(b.disjoint(c) for c in cuts) and all(b.disjoint(m) for m in taken):
+            sl.marks.append((x, y, text))
+            return
 
 
 @register
@@ -31,6 +54,7 @@ class Stacked(Mode):
         Param("distribution", "choice", "distance", "distance = one slice every thickness + space; count = N evenly spread slices", choices=["distance", "count"]),
         Param("count", "int", 10, "Number of slices", 1, 500, 1, show_if=("distribution", "count")),
         Param("space", "number", 0.0, "Empty space between consecutive slices (mm); spacers keep it", 0, 500, 0.5, unit="mm"),
+        Param("shift", "number", 0.0, "Move every slice plane along the axis by this much (mm, + towards the top), so one slice lands on a feature of the model — a rim, a shoulder, the middle of a hole: read the slice's height off the 3D view and shift by the difference. With `distance` the stack is laid out again from the shifted start, one slice after another over the model, so only the remainder at its ends is uncovered; with `count` or a spacing curve a slice moved past an end of the model is left out and the notes say so. The slices are named by their place in the stack once moved, so a setting made for one by name (a thickness, an offset) may need its name updated", -500, 500, 0.1, unit="mm", label="shift stack"),
         Param("surface", "choice", "mid", "Outline of each slice: mid = section at the middle; outer = union of the sections through the slice thickness (sand down to shape, Slicer's 3D Slices); inner = intersection (never protrudes)", choices=["mid", "outer", "inner"]),
         Param("next_outline", "bool", False, "Engrave the outline of the next layer onto each slice (GUIDE, orange): a light line showing where the layer stacked on top sits, so the stack lines up as it is glued. Drawn only where it lands on the slice's own material — a wider layer above stops at this layer's edge. Engrave, not cut; off by default", label="next layer outline"),
         Param("next_outline_offset", "number", 0.0, "Move the engraved outline in (−) or out (+) from the next layer's true edge (mm). A little negative — −0.25 or so — tucks the line under the layer above, so a glue-up a hair off still hides it; positive marks an overhang where the next layer is wider", -5, 5, 0.05, unit="mm", show_if=("next_outline", True), label="outline offset"),
@@ -39,6 +63,7 @@ class Stacked(Mode):
         Param("dowel_shape", "choice", "round", "Dowel hole shape (round, square, pencil = hexagon, cross, horizontal / vertical slot)", choices=["round", "square", "pencil", "cross", "hslot", "vslot"], show_if=("connect", "dowel")),
         Param("placement", "choice", "aligned", "aligned = the same points through the whole stack, so each dowel is one straight rod (every island that persists gets its own); to move one or add your own, alt-click a slice in the 3D view or type it under dowels · random = new points for every pair of slices, spread as far apart as that pair allows, so no two layers share a hole · lines = straight dowels you draw yourself, start → end, holes wherever they cross between two slices", choices=["aligned", "random", "lines"], show_if=("connect", ["dowel", "tab"])),
         Param("n_points", "int", 2, "Connection points per pair of slices (per island)", 1, 20, 1, show_if=("placement", ["aligned", "random"])),
+        *spacing_params("slices", [("spacing_curve", "slice spacing", [[0, 10], [0.5, 10], [1, 10]])], 3, 30),
         Param("dowels", "points", [], "Your own dowels, on top of the automatic ones (n_points), each straight through every layer it fits (x, y in the slice plane, 0, 0 = the middle of the model). Alt-click a slice in the 3D view to add one there or remove the one you click; type its x, y here to move it", unit="mm", show_if=("placement", "aligned")),
         Param("lines", "lines3", [], "Each line is one straight dowel through the stack: a start and an end point in "
               "the model's own x, y, z (0, 0, 0 is the middle of the model). Every pair of slices the line passes through "
@@ -50,25 +75,48 @@ class Stacked(Mode):
     hidden_common = ("notch_ratio", "notch_factor", "notch_angle")
 
     legend = ("Z-3 = the 3rd slice along the stacking axis, counted from the low end (X- or Y- when you stack along those) · "
-              "P-n = an alignment peg or a spacer, which goes between two slices")
+              "Z-3a = dowel a between Z-3 and Z-4 — a connector is named after the lower of the two slices it joins and a letter, "
+              "and the mark 3a is engraved beside its hole on both slices, so a hole marked with a number lower than the slice's "
+              "own takes the rod from below, one with its own number the rod going up · a straight rod through several slices "
+              "keeps the name of the slice it starts from · with tab connectors Z-3a is the peg or spacer itself, a part of its own")
 
     def build(self, ctx):
         p = ctx.p
         ax = "xyz".index(p["axis"]); normal = ctx.ax[ax]; up = ctx.ax[(ax + 2) % 3]
         length = ctx.ext[ax]; t = p["thickness"]; gap = p["space"]
-        if p["distribution"] == "count":
-            labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(p["count"])]
-            th = [ctx.thickness_of(l) for l in labels]; pos = ctx.positions(length, th)
-        else:
+        name = lambda i: f"{p['axis'].upper()}-{i + 1}"
+        drawn = ctx.spaced("spacing_curve", length - 2 * p["margin"], p["count"])
+        if drawn is not None:                             # the spacing curve: slices where it puts them, the stack as tall as the model
+            pos = [-length / 2 + p["margin"] + q for q in drawn]
+        elif p["distribution"] == "count":
+            pos = ctx.positions(length, [t] * p["count"])
+        else:                                             # one after another, each at its own thickness
             n = ctx.count_by_thickness(length, t, gap)
-            labels = [f"{p['axis'].upper()}-{i + 1}" for i in range(n)]
-            th = [ctx.thickness_of(l) for l in labels]; pos = ctx.stacked_positions(length, th, gap)
+            pos = ctx.stacked_positions(length, [ctx.thickness_of(name(i)) for i in range(n)], gap)
+        by_distance = drawn is None and p["distribution"] == "distance"
+        if p["shift"] and pos:
+            pos = self.shifted(ctx, pos, name, length, t, gap, by_distance)
+        if drawn is not None and p["shift"]:              # the graph's ticks follow the slices that are built
+            ctx.spacing[-1]["positions"] = [round(z + length / 2 - p["margin"], 3) for z in pos]
+        # a slice is named by its place in the stack, so the names are given once the planes are final (a
+        # per-slice thickness is looked up by name); laid by the curve, or moved by a shift, neighbours can overlap
+        labels = [name(i) for i in range(len(pos))]
+        th = [ctx.thickness_of(l) for l in labels]
+        if drawn is not None or p["shift"]:
+            tight = [(a, b, z2 - z1) for a, b, z1, z2, t1, t2 in zip(labels, labels[1:], pos, pos[1:], th, th[1:]) if z2 - z1 < (t1 + t2) / 2 - 1e-6]
+            if tight:
+                a, b, g = min(tight, key=lambda x: x[2])
+                why = "raise the curve there or `spacing from`, use fewer slices, or thinner material" if drawn is not None else \
+                      "use fewer slices, thinner material, or a smaller shift"
+                ctx.errors.append(f"{'spacing curve' if drawn is not None else 'shift'}: {len(tight)} pair(s) of slices overlap — "
+                                  f"{a} and {b} are {g:.1f} mm apart, less than the material: {why}")
         slices = ctx.keep([Slice(lab, "S", ctx.frame(lab, ctx.mid + normal * z, normal, up_hint=up), tk)
                            for lab, z, tk in zip(labels, pos, th)])
         self.profiles(ctx, slices)
         slices = [s for s in slices if not s.raw.is_empty]
         ctx.rods = []
-        ctx.cover_r = (t + gap) / 2 + 0.5 if p["distribution"] == "distance" else length / (2 * max(1, len(slices))) + 0.5
+        ctx.cover_r = (max(np.diff(pos)) / 2 + 0.5 if len(pos) > 1 else length / 2) if drawn is not None else \
+            (t + gap) / 2 + 0.5 if p["distribution"] == "distance" else length / (2 * max(1, len(slices))) + 0.5
         if p["space"] > 0 and p["connect"] == "none":
             ctx.errors.append(f"space = {p['space']:g} mm between slices but no connectors — the slices would float: set connect to tab (spacers) or dowel, or set space to 0")
         if p["connect"] == "none" or len(slices) < 2:
@@ -82,6 +130,30 @@ class Stacked(Mode):
         for i, sl in enumerate(slices):
             out.append(sl); out += by_pair.get(i, [])
         return out
+
+    def shifted(self, ctx, pos, name, length, t, gap, refill):
+        """Every slice plane moved by `shift` along the axis. A stack laid by distance is laid again from the shifted
+        start: the lowest slice that fits inside the margins on the shifted grid, then one after another at each
+        slice's own thickness plus the gap, as far up as the model goes — so a shift of any size leaves the model
+        covered but for the remainder at its ends. Otherwise the slices keep their number and spacing, and one moved
+        past an end of the model inside its margins is left out, with a note."""
+        p = ctx.p; s = p["shift"]; room = length - 2 * p["margin"]
+        pos = [z + s for z in pos]
+        if refill:
+            pitch = t + gap; k0 = math.ceil((-room / 2 + t / 2 - pos[0]) / pitch - 1e-9)
+            z, out = pos[0] + k0 * pitch - t / 2, []          # the bottom face of the lowest slice
+            while len(out) < MAX_SLICES:
+                tk = ctx.thickness_of(name(len(out)))
+                if z + tk > room / 2 + 1e-6:
+                    break
+                out.append(z + tk / 2); z += tk + gap
+            if len(out) == MAX_SLICES:
+                ctx.errors.append(f"{MAX_SLICES} slices from the shifted start and the model not covered: capped — use thicker material, more space, or `count`")
+            return out
+        kept = [z for z in pos if -room / 2 < z < room / 2]
+        if len(kept) < len(pos):
+            ctx.notes_extra = " · ".join(x for x in [ctx.notes_extra, f"shift {s:g} mm: {len(pos) - len(kept)} slice(s) moved past the end of the model and left out"] if x)
+        return kept
 
     def profiles(self, ctx, slices):
         """Section each slice now (connector placement needs them); plan.build reuses `raw`."""
@@ -327,7 +399,7 @@ class Stacked(Mode):
         tab_w, sw = (d if gap == 0 else d * 0.6), t + p["slot_offset"]    # a tab's width along its slot, the slot's width
         reach = math.hypot(tab_w, sw) / 2 if tab else margin - mf          # how far a cut reaches from its centre, any way it turns
 
-        def cut(x, y, ang):
+        def cut(x, y, ang, tab_w=tab_w):
             """What one connector cuts into a slice at its local (x, y): the dowel's hole, or the slot a tab goes into."""
             if not tab:
                 return dowel((x, y), d + p["slot_offset"], p["dowel_shape"])
@@ -344,9 +416,14 @@ class Stacked(Mode):
                 sl.inner = sl.raw.buffer(-mf)
             return sl.inner.contains(g) and all(g.distance(c) >= mf for c in sl.cutkeys.values())
 
-        def add_cut(sl, geom, key, other, pt):   # a slice touches two pairs: the same aligned point is cut once
+        def add_cut(sl, geom, key, other, pt, name):   # a slice touches two pairs: the same aligned point is cut once
             if key not in sl.cutkeys:
-                sl.cutkeys[key] = geom; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
+                sl.cutkeys[key] = geom; sl.cutnames[key] = name; sl.cuts.append(geom); sl.engages.append("tab" if tab else "dowel")
+                # a hole that lands on a mark engraved before it wins: the mark moves (a hole holds the model, a mark only names it)
+                for m in [m for m in sl.marks if mark_box(*m[:3], p["font"], mark_rot(m)).distance(geom) < 0.3]:
+                    sl.marks.remove(m)
+                    hole_mark(sl, next(c for k2, c in sl.cutkeys.items() if sl.cutnames[k2].split("-", 1)[1] == m[2]), m[2], p["font"])
+                hole_mark(sl, geom, name.split("-", 1)[1], p["font"])      # Z-3a is marked 3a: every slice of a stack shares the axis
             sl.links.append((other, geom, pt))
 
         def place(a, b, i, j, x, y):
@@ -357,6 +434,11 @@ class Stacked(Mode):
             hole at the unstepped point, every second pair of an aligned stack lost all its spacers to the slots of
             the pair before, and the layers they held were cut off as floating."""
             nonlocal k
+            # the gap this pair really has: the drawn spacing curve spreads pairs unevenly, and a pair's spacer is as
+            # long as its own gap — a peg where the two touch, a spacer with a body where they do not
+            spacing = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2]))
+            gap_i = max(0.0, round(spacing - (a.thickness + b.thickness) / 2, 3))
+            tab_w_i = d if gap_i < 1e-6 else d * 0.6
             if tab:
                 ang = {"x": 0.0, "y": 90.0, "alternate": 90.0 * (j % 2)}[p["spacer_dir"]]
                 step = d * 1.2 * (1 if i % 2 else -1)
@@ -369,31 +451,36 @@ class Stacked(Mode):
                 xa, ya = x + dx * s, y + dy * s
                 xb, yb = to_local(b.M, [(a.M @ np.array([xa, ya, 0, 1]))[:3]])[0]
                 ka, kb = (round(xa, 2), round(ya, 2), ang), (round(xb, 2), round(yb, 2), ang)
-                ga, gb = cut(xa, ya, ang), cut(xb, yb, ang)
+                ga, gb = cut(xa, ya, ang, tab_w_i), cut(xb, yb, ang, tab_w_i)
                 if fits(a, ga, ka) and fits(b, gb, kb):
                     break
             else:
                 return None
-            spacing = float(np.dot(b.M[:3, 3] - a.M[:3, 3], a.M[:3, 2]))
             pt = tuple((a.M @ np.array([xa, ya, spacing / 2, 1]))[:3])           # world point in the gap: the connection's identity
-            add_cut(a, ga, ka, b.label, pt); add_cut(b, gb, kb, a.label, pt)
+            # the connector's name: the lower slice's and a letter (Z-3a, Z-3b …), or the name the hole in `a` already
+            # has when a straight rod from the pair below carries on through this one
+            name = a.cutnames.get(ka)
+            if name is None:
+                n = named.get(i, 0); named[i] = n + 1
+                name = f"{a.label}{ABC_LOWER[n % 26] * (n // 26 + 1)}"
+            add_cut(a, ga, ka, b.label, pt, name); add_cut(b, gb, kb, a.label, pt, name)
             if not tab:
                 ctx.rods.append([list((a.M @ np.array([xa, ya, -t / 2, 1]))[:3]), list((a.M @ np.array([xa, ya, spacing + t / 2, 1]))[:3]), d,
-                                 rod, list(a.M[:3, 0])])
+                                 rod, list(a.M[:3, 0]), name, a.label, b.label])
                 return xa, ya
             # one flat piece across the gap: a peg when space = 0, a spacer (body + a tab each end) otherwise
             k += 1
             M = frame_xy(np.array(pt), a.M[:3, :3] @ np.array([dx, dy, 0]), a.M[:3, 2])   # piece plane: spacer direction × stack normal
             L = spacing + t                                                     # from the far side of a to the far side of b
-            body = Polygon([(-d / 2, -gap / 2), (d / 2, -gap / 2), (d / 2, gap / 2), (-d / 2, gap / 2)]) if gap > 0 else None
-            tabs = Polygon([(-tab_w / 2, -L / 2), (tab_w / 2, -L / 2), (tab_w / 2, L / 2), (-tab_w / 2, L / 2)])
-            sl = Slice(f"P-{k}", "P", M, t)
+            body = Polygon([(-d / 2, -gap_i / 2), (d / 2, -gap_i / 2), (d / 2, gap_i / 2), (-d / 2, gap_i / 2)]) if gap_i > 0 else None
+            tabs = Polygon([(-tab_w_i / 2, -L / 2), (tab_w_i / 2, -L / 2), (tab_w_i / 2, L / 2), (-tab_w_i / 2, L / 2)])
+            sl = Slice(name, "P", M, t)                                       # the peg is the connector: it carries its name
             sl.raw = as_multi(unary_union([body, tabs]) if body is not None else tabs)
             sl.pair = i
             extra.append(sl)
             return xa, ya
 
-        bare, rooms = 0, []
+        bare, rooms, named = 0, [], {}                                        # named: connectors so far per pair, for the letters
         want = max(1, p["n_points"])
         for i, (a, b) in enumerate(zip(slices, slices[1:])):
             # what slice a already carries, for every placement: an aligned point repeats exactly and is kept
