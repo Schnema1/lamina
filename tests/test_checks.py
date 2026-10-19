@@ -128,3 +128,25 @@ def test_thin_tips_and_slivers_are_warned_and_trimmed_on_request():
     area = lambda pl, lab: sum(Polygon(r[0], r[1:]).area for sl in pl["slices"] if sl["label"] == lab for pc in sl["pieces"] for r in pc["kerfed"])
     lab = thin[0][0]
     assert 0 < area(plan, lab) - area(trimmed, lab) < 0.05 * area(plan, lab)     # a point gone, the part otherwise whole
+
+
+def test_a_geometry_operation_the_engine_refuses_is_retried_snapped_then_given_up():
+    """The browser build's GEOS now and then throws on a finite outline where the desktop's never does. Such an
+    operation is run again on precision-snapped copies, and when that fails too the caller gets its default — a
+    label beside its part, a thin spot not reported — instead of a model that will not slice."""
+    from shapely.errors import GEOSException
+    from shapely.geometry import box
+    from core.geometry import robust
+    calls = []
+    def flaky(a, b):
+        calls.append((a, b))
+        if len(calls) == 1:
+            raise GEOSException("IllegalArgumentException: CGAlgorithmsDD::orientationIndex encountered NaN/Inf numbers")
+        return a.difference(b)
+    out = robust(flaky, box(0, 0, 10, 10), box(5, 0, 15, 10))
+    assert len(calls) == 2 and abs(out.area - 50) < 1e-6                     # the second try, on snapped copies, went through
+    def never(a):
+        raise GEOSException("no")
+    assert robust(never, box(0, 0, 1, 1)) is None
+    assert robust(never, box(0, 0, 1, 1), default=[]) == []
+    assert abs(robust(lambda a: a.buffer(1), box(0, 0, 1, 1)).area - box(0, 0, 1, 1).buffer(1).area) < 1e-9   # the ordinary path untouched

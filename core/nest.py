@@ -23,7 +23,7 @@ from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 from shapely.ops import nearest_points, split, unary_union
 from shapely.geometry.polygon import orient
 from shapely.strtree import STRtree
-from .geometry import as_multi, fit_on_part, label_angles, label_box, label_rect, mark_box, mark_rot, min_rect_angle, widest_spot
+from .geometry import as_multi, fit_on_part, label_angles, label_box, label_rect, mark_box, mark_rot, min_rect_angle, robust, widest_spot
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -79,8 +79,8 @@ def _convex_pieces(geom, tol, cap, coarse=False):
             discs = []
             for g in as_multi(geom).geoms:
                 for r in g.interiors:
-                    c = shapely.maximum_inscribed_circle(Polygon(r), tol)
-                    if c.length > 2 * tol:
+                    c = robust(lambda q: shapely.maximum_inscribed_circle(q, tol), Polygon(r))
+                    if c is not None and c.length > 2 * tol:
                         discs.append(Point(c.coords[0]).buffer(c.length * 0.98, 4).exterior)
             return _convex_pieces(Polygon(geom.convex_hull.exterior, discs), tol, cap, coarse=True) if discs else [_hull(geom)]
         p = todo.pop()

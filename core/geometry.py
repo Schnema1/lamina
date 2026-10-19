@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools, math
 import numpy as np
 import shapely
+from shapely.errors import GEOSException
 import shapely.affinity
 import trimesh
 from shapely.geometry import Polygon, MultiPolygon, Point, LineString, MultiLineString, box
@@ -136,6 +137,20 @@ def as_lines(g) -> MultiLineString:
     return MultiLineString([l for l in shapely.get_parts(g) if isinstance(l, LineString)])
 
 
+def robust(op, *geoms, default=None):
+    """`op(*geoms)`, and when the geometry engine throws — the browser build's GEOS now and then reports
+    "orientationIndex encountered NaN/Inf" from an overlay or an inscribed circle on a perfectly finite outline, where
+    the desktop's never does — the same once more on precision-snapped copies (the snapping overlay is the robust
+    one), else `default`: a label that goes beside its part, a thin spot not reported, beats a model that will not slice."""
+    try:
+        return op(*geoms)
+    except GEOSException:
+        try:
+            return op(*[shapely.set_precision(q, 1e-6) for q in geoms])
+        except GEOSException:
+            return default
+
+
 def label_box(text, font):
     """The room an engraved label takes at `font` mm (the height of a capital): (w, h) — the stroke font's own width
     with a millimetre either side, never under 6 mm, and 1.4 capitals, which holds the descenders. The sheet
@@ -175,11 +190,14 @@ def fit_block(region, w, h, angles=(0, 90)):
         R = shapely.affinity.rotate(region, -ang, origin=(0, 0)) if ang else region
         E = R
         for dx, dy in ((w / 2, h / 2), (-w / 2, h / 2), (w / 2, -h / 2), (-w / 2, -h / 2), (w / 2, 0), (-w / 2, 0), (0, h / 2), (0, -h / 2)):
-            E = E.intersection(shapely.affinity.translate(R, dx, dy))
-            if E.is_empty:
+            E = robust(lambda a, b: a.intersection(b), E, shapely.affinity.translate(R, dx, dy))
+            if E is None or E.is_empty:
                 break
+        if E is None:
+            continue
         for piece in sorted(as_multi(E).geoms, key=lambda q: -q.area):
-            for cx, cy in (shapely.maximum_inscribed_circle(piece, 0.5).coords[0], piece.representative_point().coords[0]):
+            disc = robust(lambda q: shapely.maximum_inscribed_circle(q, 0.5), piece)
+            for cx, cy in ([disc.coords[0]] if disc is not None else []) + [piece.representative_point().coords[0]]:
                 if R.covers(box(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)):
                     x, y = shapely.affinity.rotate(Point(cx, cy), ang, origin=(0, 0)).coords[0] if ang else (cx, cy)
                     return (float(x), float(y), float(ang))
@@ -207,7 +225,7 @@ def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
     holds it. None when it fits nowhere: a label crammed against the edge of a small part is better off beside it."""
     region = as_multi(region)
     if marks:
-        region = as_multi(region.difference(unary_union([m.buffer(0.5) for m in marks])))
+        region = robust(lambda a, b: as_multi(a.difference(b)), region, unary_union([m.buffer(0.5) for m in marks]), default=region)
     for cand in (covered(region, guides), region):
         if cand is not None and not cand.is_empty:
             spot = fit_block(cand, w + 2 * room, h + 2 * room, angles)
@@ -222,7 +240,10 @@ def widest_spot(region):
     region = as_multi(region)
     if region.is_empty:
         return (0.0, 0.0, 0.0)
-    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in region.geoms), key=lambda c: c.length)
+    discs = [d for d in (robust(lambda q: shapely.maximum_inscribed_circle(q, 0.5), g) for g in region.geoms) if d is not None]
+    if not discs:
+        return (0.0, 0.0, 0.0)
+    best = max(discs, key=lambda c: c.length)
     return (float(best.coords[0][0]), float(best.coords[0][1]), 0.0)
 
 
@@ -233,10 +254,13 @@ def orient_arrows(region, longest=8.0, keep=()):
     engraved, as boxes); none on a part too small to hold a legible pair."""
     region = as_multi(region)
     if keep:
-        region = as_multi(region.difference(unary_union([k.buffer(0.6) for k in keep])))
+        region = robust(lambda a, b: as_multi(a.difference(b)), region, unary_union([k.buffer(0.6) for k in keep]), default=region)
     if region.is_empty:
         return []
-    disc = max((shapely.maximum_inscribed_circle(g, 0.5) for g in region.geoms), key=lambda c: c.length)
+    discs = [d for d in (robust(lambda q: shapely.maximum_inscribed_circle(q, 0.5), g) for g in region.geoms) if d is not None]
+    if not discs:
+        return []
+    disc = max(discs, key=lambda c: c.length)
     (cx, cy), r = disc.coords[0], disc.length
     L = min(longest, 0.6 * r)                   # well inside the clearance: on a small part the arrows must not read as its edge
     if L < 3.0:
@@ -370,8 +394,10 @@ def thin_spots(region, mf):
     leaves those alone (see there)."""
     out = []
     for w, length, ratio in ((mf, 2 * mf, 0.0), (1.5 * mf, 4 * mf, 3.0)):
-        opened = region.buffer(-w / 2).buffer(w / 2 + 0.05)
-        for piece in as_multi(region.difference(opened)).geoms:
+        thin = robust(lambda q, half=w / 2: q.difference(q.buffer(-half).buffer(half + 0.05)), region)
+        if thin is None:
+            continue
+        for piece in as_multi(thin).geoms:
             a, b = min_dims(piece)
             if piece.area > 0.1 * w * w and b >= length and b >= ratio * a and not any(piece.intersects(q) for q in out):   # one spot, not one per size
                 out.append(piece)
@@ -384,7 +410,7 @@ def trim_thin(region, mf):
     stays: that is a part in two pieces, which the check reports as such."""
     n = 0
     for piece in thin_spots(region, mf):
-        cut = as_multi(region.difference(piece.buffer(0.02, join_style=2)))
-        if len(cut.geoms) == len(region.geoms) and not cut.is_empty:
+        cut = robust(lambda a, b: as_multi(a.difference(b)), region, piece.buffer(0.02, join_style=2))
+        if cut is not None and len(cut.geoms) == len(region.geoms) and not cut.is_empty:
             region = cut; n += 1
     return region, n
