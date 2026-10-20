@@ -64,6 +64,12 @@ def _fill_small_holes(geom, area):
 
 
 def _convex_pieces(geom, tol, cap, coarse=False):
+    """`_pieces` below, and its hull alone when the engine fails on the way (see geometry.robust)."""
+    out = robust(lambda q: _pieces(q, tol, cap, coarse), geom)
+    return out if out is not None else [_hull(geom)]
+
+
+def _pieces(geom, tol, cap, coarse=False):
     """Convex pieces whose union covers geom and overruns it by at most `tol` (an approximate convex decomposition):
     each piece is split at its deepest notch, along the bisector of the notch, until the hull of every piece is
     within `tol` of it. Holes are notches too, so a ring becomes a few wedges around an open middle. Coordinate
@@ -82,7 +88,7 @@ def _convex_pieces(geom, tol, cap, coarse=False):
                     c = robust(lambda q: shapely.maximum_inscribed_circle(q, tol), Polygon(r))
                     if c is not None and c.length > 2 * tol:
                         discs.append(Point(c.coords[0]).buffer(c.length * 0.98, 4).exterior)
-            return _convex_pieces(Polygon(geom.convex_hull.exterior, discs), tol, cap, coarse=True) if discs else [_hull(geom)]
+            return _pieces(Polygon(geom.convex_hull.exterior, discs), tol, cap, coarse=True) if discs else [_hull(geom)]
         p = todo.pop()
         hull = p.convex_hull
         deepest = None

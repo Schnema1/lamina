@@ -32,3 +32,18 @@ jobs:
       - run: uv run --with playwright pytest tests/test_ui.py -q
         env:
           LAMINA_UI: "1"
+
+  # The published site, end to end: the static build loads its Python in a real browser and slices every technique
+  # (tests/test_e2e_site.py). The pages workflow runs the same test before it deploys; here it runs on every pull
+  # request, because the browser build's geometry engine differs from the desktop's and has failed where the
+  # desktop never does — found at the deploy is found too late.
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: python deploy/build_site.py
+      - run: uv run --with playwright playwright install --with-deps chromium
+      - run: uv run --with playwright pytest tests/test_e2e_site.py -q
+        env:
+          LAMINA_E2E: "1"
