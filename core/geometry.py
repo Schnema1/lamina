@@ -219,6 +219,10 @@ def covered(region, guides):
 
 
 def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
+    return robust(lambda r: _fit_on_part(r, guides, w, h, marks, angles, room), region, default=None)
+
+
+def _fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
     """Where a w × h label fits whole on a part's material with `room` to spare all round: inside the next layer's
     outline when the part carries one (`guides`), so the layer glued on top hides it, else anywhere on the part —
     clear of its holes and of the marks and arrows (boxes) already engraved on it — at the first of `angles` that
@@ -235,6 +239,10 @@ def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
 
 
 def widest_spot(region):
+    return robust(lambda r: _widest_spot(r), region, default=(0.0, 0.0, 0.0))
+
+
+def _widest_spot(region):
     """The spot on a part with the most clearance all round — the centre of its largest inscribed circle: where a
     label that fits nowhere whole is still put, overrunning the outline, for the maker to trim rather than left off."""
     region = as_multi(region)
@@ -248,6 +256,10 @@ def widest_spot(region):
 
 
 def orient_arrows(region, longest=8.0, keep=()):
+    return robust(lambda r: _orient_arrows(r, longest, keep), region, default=[])
+
+
+def _orient_arrows(region, longest=8.0, keep=()):
     """Two arrows at a part's widest spot, on the LABEL layer: one up its frame's y, one shorter to the right along
     x, so every part of a model carries the same two directions and the engraved face is known to be the front. As
     (style, LineString) lines, shaft and head each, sized to the clearance there, clear of `keep` (the marks already
@@ -385,6 +397,10 @@ def line_coords(ml) -> list:
 
 
 def thin_spots(region, mf):
+    return robust(lambda r: _thin_spots(r, mf), region, default=[])
+
+
+def _thin_spots(region, mf):
     """The parts of `region` too thin for too long to survive the cutter or the hand — the point of a slice that
     meets the surface at a grazing angle, a wall left between a slot and the edge — as polygons: what an opening
     (erode, then dilate) takes off, kept where it runs long enough to matter. Two sizes: thinner than `mf` for 2 × `mf`,
@@ -405,6 +421,10 @@ def thin_spots(region, mf):
 
 
 def trim_thin(region, mf):
+    return robust(lambda r: _trim_thin(r, mf), region, default=(region, 0))
+
+
+def _trim_thin(region, mf):
     """`region` with its thin tips and slivers cut off — a blunt end where the point was, a slot open to the edge
     where the wall beside it was — and how many went. A thin spot whose removal would split the region (a bridge)
     stays: that is a part in two pieces, which the check reports as such."""
