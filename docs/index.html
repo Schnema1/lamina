@@ -84,7 +84,7 @@ figure{margin:0}
    declared height fights max-width and squashes the image. The attributes stop the page reflowing 14 times. */
 img,video{max-width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;background:#0f1012}
 figcaption{color:var(--muted);font-size:13px;margin-top:8px}
-.grid{display:grid;gap:18px}
+.grid{display:grid;gap:18px}.cols{columns:2 320px;column-gap:28px}.cols li{break-inside:avoid}
 .g2{grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))}
 .g3{grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
@@ -494,7 +494,8 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
       together without the key. Two small arrows at each part's middle say which way is up and which face is the
       front.</figcaption>
     </figure>
-    <div>
+  </div>
+  <div class="cols" style="margin-top:24px">
       <ul class="clean">
         <li><b>SVG and DXF</b> with separate layers for outer cuts, inner cuts, score lines and labels, with or
             without the labels, in millimetres, centimetres or inches. The SVG opens directly in LightBurn, the
@@ -531,7 +532,6 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
         <li><b>Kerf and fit</b> — kerf compensation when your machine does not do its own (off by default), a fit
             offset on every slot, dog-bone relief for routers, and a 10 cm or 4 in scale-check bar on every export.</li>
       </ul>
-    </div>
   </div>
   <figure style="margin-top:24px">
     <img src="media/export.jpg" width="2000" height="963" loading="lazy" decoding="async" alt="The export tab with what the job weighs, download links and prototyping options">
