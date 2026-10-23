@@ -2,6 +2,14 @@
 
 What changed in each release. The GitHub release for a version is this section, pasted.
 
+## Unreleased
+
+### Added
+
+- **How much stock to buy.** The Export tab now gives the sheet area beside the weight: m², or ft² when the units are
+  inches, counted on whole sheets with their offcuts, and a line saying how much of that area becomes parts and what
+  share of the stock is used. It is the figure to compare with a shop's price per square metre or the size of a pack.
+
 ## 0.2.5
 
 The first version with changes from outside Lamina: @Schnema1 sent three. A stacked slice can carry the outline of
