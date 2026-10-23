@@ -4,7 +4,7 @@ import math
 import numpy as np
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
-from . import Mode, Param, register
+from . import Mode, Param, register, spacing_params
 from .radial import Radial
 from ..geometry import as_multi, frame, section_polygons, to_local
 from ..model import Slice
@@ -190,6 +190,7 @@ class Curve(Mode):
         Param("count", "int", 8, "Rib count", 1, 300, 1),
         Param("spacing", "number", 20, "Rib spacing along the curve (mm)", 1, 500, 0.5, unit="mm"),
         Param("spines", "int", 1, "Spine slices in the curve plane (0 = ribs only, glue/wire them yourself)", 0, 20, 1),
+        *spacing_params("ribs", [("spacing_curve", "rib spacing", [[0, 20], [0.5, 20], [1, 20]])], 3, 60),
     ]
 
     def build(self, ctx):
@@ -208,7 +209,9 @@ class Curve(Mode):
         def clip(M):                                             # body parts stop where a branch's own begin
             owned = [g for *_, cell, _ in br if not (g := Radial._owned(M, cell, ctx.span)).is_empty]
             return as_multi(Radial._owned(M, [], ctx.span).difference(unary_union(owned))) if owned else None
-        stations = np.linspace(0, s[-1], n + 2)[1:-1] if n > 1 else [s[-1] / 2]
+        drawn = ctx.spaced("spacing_curve", s[-1], n)
+        stations = drawn if drawn is not None else np.linspace(0, s[-1], n + 2)[1:-1] if n > 1 else [s[-1] / 2]
+        n = len(stations)
         # station position and tangent angle in the curve plane
         place = []
         for si in stations:

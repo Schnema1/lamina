@@ -9,6 +9,121 @@ What changed in each release. The GitHub release for a version is this section, 
 - **How much stock to buy.** The Export tab now gives the sheet area beside the weight: m², or ft² when the units are
   inches, counted on whole sheets with their offcuts, and a line saying how much of that area becomes parts and what
   share of the stock is used. It is the figure to compare with a shop's price per square metre or the size of a pack.
+## 0.3.0
+
+The release for the laser: every label in a single-stroke font, dowels named after their slices and numbered beside their holes, labels that keep clear of parts and of each other, orientation arrows, a four-letter short name, and non-uniform spacing drawn as a curve in every technique, with a graph to draw it; a stack can be shifted to land a slice on a feature. Thin tips and slivers are found and can be trimmed off, small parts go into the hollows of big ones, and the first sheet is filled before the second. Folded nets got seam numbers that can be read and hinge lines for their tabs, the SVG keeps each part with its labels, and the assembly video names each part as it goes in.
+
+### Added
+
+- **Non-uniform spacing, drawn as a curve.** Stacked, interlocked, radial and curve each have a *vary the spacing*
+  switch, and with it a graph under the 3D view: the distance between neighbouring slices against the position
+  along the way — for radial the angle between the fan's planes against the angle round the axis, periodic, so the
+  fan closes on itself; for interlocked one graph per family, each along its own axis. Drag the points (double-click
+  adds one, alt-click removes one) and the model re-slices: dense where the shape changes fast, sparse where it does
+  not. The curve between the points never overshoots them. *Keep* decides what is fixed: the count, with the drawn
+  spacings scaled to span the model (the graph says by how much), or the spacings as drawn, with the count following.
+  The ticks under the graph are where the slices went. Four new examples open with a curve: `vase` (stacked, dense
+  at the foot, shoulder and lip), `ripple` (interlocked, one family following a ripple that tightens), `berry`
+  (radial, the planes crowding the bumpy side) and `hook` (curve, ribs close round the bend). Slices a curve puts
+  closer than the material are an error, with the pair named.
+- **Stacked: shift the stack.** A new `shift` parameter moves every slice plane along the axis by the same amount,
+  so one slice lands on a feature of the model — a rim, a shoulder, the middle of a hole — instead of wherever the
+  even spacing put the nearest one. Laid by distance, the stack is laid again from the shifted start, one slice after
+  another over the model; by count or along a spacing curve the slices keep their spacing, and one moved past an end of
+  the model is left out, with a note, and two that a thick slice among them makes overlap are an error that names
+  the pair.
+- **Thin spots found, and trimmed on request.** A part with a tip or a sliver too thin for too long — the point of a
+  radial slice where it meets the surface at a grazing angle, the wall left between a slot and the edge — is
+  warned about, with what would break off and how long it is; the cylinder's 0.7 mm walls beside its end slots and
+  the cone's points passed every check before. A new `trim thin spots` switch (`trim_thin`, among the fixes the
+  warning offers) cuts them off: the part ends blunt there, a little short of the model, and the plan says how
+  many spots went. The cone, blob and cylinder examples open with it on.
+- **Dowels named after their slices, and marked beside their holes.** A connector is named after the lower of the
+  two slices it joins and a letter: `Z-3a` is dowel *a* between `Z-3` and `Z-4`, and `3a` is engraved beside its
+  hole on both slices. Read a slice's holes by their numbers: one below the slice's own takes the rod from below, its
+  own number the rod going up — with random placement, where every pair of layers has its own holes, nothing on the
+  part used to say which was which. A straight rod through several slices keeps the name of the slice it starts
+  from; with tab connectors the peg or spacer is the connector and carries the name as its part label (they were
+  `P-1`, `P-2` … in cut order). The assembly key lists every rod with its ends and its length. Marks — these and the
+  seam numbers of folded panels — now turn with their part on the sheet, so a mark placed beside a hole stays beside
+  it however the part was nested, and a hole is never cut through a mark engraved before it.
+- **Orientation arrows.** A new sheet option (`orient_mark`) engraves two small arrows at the middle of every part,
+  with the labels: a long one up the part's frame and a short one to its right, the same two directions on every
+  part of the model, so a part turned on the sheet or laid face down is seen at once — the engraved face is the front.
+  Labels keep clear of them, and the assembly key says what they mean.
+
+### Changed
+
+- **Each part is one group in the SVG**: its cuts, fold and guide lines, dowel numbers, arrows, label and leader line
+  sit in one `<g class="piece">` (with a sub-group per layer), so a part dragged elsewhere in Inkscape or Illustrator
+  takes its labels with it instead of leaving them behind. The border and title are the sheet's own group. Each
+  layer group keeps its colour, which is what laser software sorts by, so cut settings by colour work as before.
+- **Two stacked examples open with tab connectors**: the `tube` with pegs and the `wavy_torus` with spacers across
+  its 5 mm gaps, beside the dowelled ones, so both kinds of connector are on show.
+- **The model's name on each label is now a short code.** A label used to start with the whole project or model
+  name — `horse_statue Y-12-2` is nineteen characters, most of them the name — which is what made the labels of a
+  scanned model with a hundred small parts impossible to place. It now starts with up to four letters: the initials
+  of the name's words (`HS Y-12-2`, `MFC Z-1`), or the first four letters of a one-word name (`BUNN Z-3`); a new
+  `short_name` field sets it, and the assembly key says which name it stands for.
+- **Labels on the parts where they fit, in free space where they do not.** A label used to go beside its part at
+  one of thirty spots round its bounding box, and when none was free — on a full sheet of a scanned model, most of
+  them — it was dropped on the part with no check at all, over neighbours, other labels and the sheet edge. It now
+  goes on the part itself wherever the whole label fits on the material, inside the next layer's outline where there
+  is one, upright or turned along the part, clear of holes and marks; otherwise beside the part at the nearest free
+  spot searched outward from its outline, inside the margin, touching no part or label, with a leader line that
+  crosses no other part and starts at the label's edge rather than through its letters. `labels on the parts`
+  (`label_inside`) became `labels go` (`label_place`): *part*, the new default, *beside* for nothing engraved on the
+  parts, *on* for always on the part; a project saved with the tickbox keeps what it had. A part with no free spot
+  anywhere is tried smaller first — four fifths, two thirds, half the font — on the part and beside it, before it is
+  put on the part anyway and counted in the notes. The sheet title is engraved inside the top margin at a size that
+  fits it, where it used to run into the parts, and the one-file-per-part export engraves the label exactly where
+  the sheet does.
+- **Labels in a single-stroke font.** Every engraved text in the cut files — part labels, seam numbers, the sheet
+  title — is now drawn in a stroke font (Hershey Simplex): each letter is a few open lines the laser engraves in one
+  pass, the same lines in SVG, DXF, PDF and EPS. Text used to be left as text, which the laser's software filled with
+  whatever font it had and traced as the two edges of every letter, or dropped when the font was missing. The `font`
+  parameter is now the height of a capital letter in mm, so a 4 mm label has 4 mm capitals (it used to be a 4 mm
+  font size, with capitals under 3 mm); the labels take a little more room beside the parts for it.
+
+### Fixed
+
+- **What goes on a part, and in what order.** The orientation arrows, the dowel and seam numbers and the label used
+  to be placed without regard for each other. Now the numbers go first, the arrows take the widest spot they leave,
+  and the label goes on the part only where it fits with room to spare — otherwise beside it, searched outward over
+  the whole sheet, and as a last resort with its line running across whatever lies between. A label is never put
+  where it overruns its part again. The rectangle packing is tried beside the polygon nest and kept when it needs
+  fewer sheets. A part too small for its label at any size carries its name without the short name in front, which
+  the assembly key allows for, before the label goes far away on a line. A part that cannot carry even that is
+  nested with the room for its name reserved beside it, so the label sits next to the part on a packed sheet
+  instead of wherever a gap was left: the wavy torus's 68 spacers had their labels up to 35 cm away, now within
+  10 mm. The last resort may use the sheet's margin band, where the title already is.
+- **Small parts go into the holes of big ones.** A hollow model's slices are rings with a wide empty middle, and the
+  nester left those middles empty: each dowel hole counted as a notch when the outline was cut into convex pieces
+  for the no-fit polygons, a slice with thirty of them blew past the cap and was treated as its hull, which
+  covered the middle. Holes too small for any part to go in are filled before that cut, so the bunny's small
+  parts now sit inside its big slices.
+- **A peg's name on the peg.** A part too narrow for its label at the font or a little under went beside with a
+  leader line, and a column of fourteen pegs on the tube's sheet had fourteen lines crossing each other to
+  names turned every which way. The label now goes on the part down to two thirds of the font, the size the
+  nester already reserved room for, so a peg carries its own name along its length.
+- **The first sheet is filled before the second.** When the polygon nest and the plain rectangle packing need the
+  same number of sheets, the one that leaves less for the last sheet is kept: the tube's seven 3 mm rings went
+  five, two (the second row dropped into the valleys of the first and lost a column), now six and one.
+- **A split never leaves loose pieces.** A part too big for the sheet is cut into strips, and the cut used to be
+  free to fall exactly where the other family's slots end — the tall bar's lower half came apart into three pieces,
+  one a 13 × 73 mm triangle held by nothing. Each cut now slides sideways until the piece on either side of it is
+  whole, and when no position manages that the slice says so as an error.
+- **Orientation arrows keep well inside a small part**, at most six tenths of its clearance, and a part too small
+  for a legible pair gets none.
+- **Folded nets you can build.** Seam numbers were dropped at every seam's middle with no check, hundreds of them
+  over each other and across the fold lines of a scanned model's net. Each now reads along its own edge, on the tab
+  where the seam has one (as Pepakura prints them) or just inside the edge, only where the panel has room, and the
+  panel's warnings count the ones left off. A tab that would land on its own panel is put on the other side of the
+  seam instead of being dropped, which gave the cow example 49 more tabs. The hinge of a tab is scored across its
+  base only, where it used to run the whole seam under the cut line. The legend explains folds, cuts and how to read
+  the numbers.
+- **The assembly video names each part.** While the steps slider is short of the end, the 3D view carries the step
+  number and the name of the part going in at the top centre, drawn into the canvas, so the recorded video shows it.
 
 ## 0.2.5
 

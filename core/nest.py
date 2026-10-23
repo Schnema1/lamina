@@ -19,11 +19,11 @@ import numpy as np
 import shapely
 from shapely import affinity
 from scipy.ndimage import binary_erosion, distance_transform_edt
-from shapely.geometry import LineString, Point, box
-from shapely.ops import split
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
+from shapely.ops import nearest_points, split, unary_union
 from shapely.geometry.polygon import orient
 from shapely.strtree import STRtree
-from .geometry import as_multi, inside_spot, label_box, min_rect_angle
+from .geometry import as_multi, fit_on_part, label_angles, label_box, label_rect, mark_box, mark_rot, min_rect_angle, robust, widest_spot
 
 ROTS = (0, 90, 180, 270)
 # A part's rotations on one sheet are independent, and their no-fit union, the costliest call of a slice, runs in GEOS
@@ -48,7 +48,7 @@ def _put(pc, sheet_i, rot, dx, dy, at=None):
     with it. `place` says where it sits — its corner, or `at` where the caller means a spot (the margin)."""
     T = lambda g: affinity.translate(affinity.rotate(g, rot, origin=(0, 0)), dx, dy)
     geom = as_multi(T(pc.kerfed))
-    pc.placed, pc.placed_lines, pc.placed_marks = geom, [(s, T(l)) for s, l in pc.lines], [(*T(Point(x, y)).coords[0], t) for x, y, t in pc.marks]
+    pc.placed, pc.placed_lines, pc.placed_marks = geom, [(s, T(l)) for s, l in pc.lines], [(*T(Point(m[0], m[1])).coords[0], m[2], mark_rot(m)) for m in pc.marks]
     pc.place = (sheet_i, *(at or geom.bounds[:2]), rot)
     return geom
 
@@ -57,16 +57,38 @@ def _hull(geom):
     return np.asarray(orient(geom.convex_hull).exterior.coords)[:-1]       # counter-clockwise, closing point dropped
 
 
-def _convex_pieces(geom, tol, cap):
+def _fill_small_holes(geom, area):
+    """`geom` with every hole smaller than `area` filled: nothing to nest fits in them, and each costs the
+    decomposition a cut."""
+    return as_multi(MultiPolygon([Polygon(g.exterior, [r for r in g.interiors if Polygon(r).area >= area]) for g in as_multi(geom).geoms]))
+
+
+def _convex_pieces(geom, tol, cap, coarse=False):
+    """`_pieces` below, and its hull alone when the engine fails on the way (see geometry.robust)."""
+    out = robust(lambda q: _pieces(q, tol, cap, coarse), geom)
+    return out if out is not None else [_hull(geom)]
+
+
+def _pieces(geom, tol, cap, coarse=False):
     """Convex pieces whose union covers geom and overruns it by at most `tol` (an approximate convex decomposition):
     each piece is split at its deepest notch, along the bisector of the notch, until the hull of every piece is
     within `tol` of it. Holes are notches too, so a ring becomes a few wedges around an open middle. Coordinate
-    arrays, one hull each. More than `cap` pieces and the answer is the one hull: the no-fit polygons cost a ring
-    per piece of every placed part, and a scanned outline with dozens of shallow pockets is not worth that."""
+    arrays, one hull each. More than `cap` pieces and the answer is coarse: the hull round the outside (the no-fit
+    polygons cost a ring per piece of every placed part, and a scanned outline with dozens of shallow pockets is not
+    worth that) with each hole kept as the largest disc it holds — convex, and inside the hole, so the wedges between
+    hull and disc still cover every bit of material — and a hollow slice's middle stays open to the small parts."""
     out, todo = [], list(as_multi(geom).geoms)
     while todo:
         if len(out) + len(todo) > cap:
-            return [_hull(geom)]
+            if coarse:
+                return [_hull(geom)]
+            discs = []
+            for g in as_multi(geom).geoms:
+                for r in g.interiors:
+                    c = robust(lambda q: shapely.maximum_inscribed_circle(q, tol), Polygon(r))
+                    if c is not None and c.length > 2 * tol:
+                        discs.append(Point(c.coords[0]).buffer(c.length * 0.98, 4).exterior)
+            return _pieces(Polygon(geom.convex_hull.exterior, discs), tol, cap, coarse=True) if discs else [_hull(geom)]
         p = todo.pop()
         hull = p.convex_hull
         deepest = None
@@ -207,7 +229,7 @@ def _rect_nest(prepared, sheet, gap, margin):
     packer = newPacker(mode=PackingMode.Offline, bin_algo=PackingBin.BFF, pack_algo=SkylineBlWm, sort_algo=SORT_AREA, rotation=True)
     dims = []
     for i, (pc, rot0) in enumerate(prepared):
-        x0, y0, x1, y1 = affinity.rotate(pc.kerfed, rot0, origin=(0, 0)).bounds
+        x0, y0, x1, y1 = affinity.rotate(pc.nest_shape, rot0, origin=(0, 0)).bounds
         w, h = x1 - x0 + gap, y1 - y0 + gap
         dims.append((w, h))
         if (w <= W + gap and h <= H + gap) or (h <= W + gap and w <= H + gap):
@@ -219,12 +241,12 @@ def _rect_nest(prepared, sheet, gap, margin):
         pc, rot0 = prepared[i]
         w0, h0 = dims[i]
         rot = rot0 + (90 if abs(w - h0) < 1e-6 and abs(h - w0) < 1e-6 and abs(w0 - h0) > 1e-6 else 0)
-        g = affinity.rotate(pc.kerfed, rot, origin=(0, 0))
+        g = affinity.rotate(pc.nest_shape, rot, origin=(0, 0))
         # each rectangle is the part plus one gap, in a bin one gap wider than the sheet inside its margins: the part
         # sits at the rectangle's corner, so the gap falls between neighbours and the last one ends at the margin.
         # Centred in its rectangle, every part on the far edges ran half a gap into the margin.
-        geom = _put(pc, b, rot, margin + x - g.bounds[0], margin + y - g.bounds[1])
-        sheets.setdefault(b, Sheet(sheet[0], sheet[1], margin)).add(geom, pc)
+        _put(pc, b, rot, margin + x - g.bounds[0], margin + y - g.bounds[1])
+        sheets.setdefault(b, Sheet(sheet[0], sheet[1], margin)).add(affinity.translate(g, margin + x - g.bounds[0], margin + y - g.bounds[1]), pc)
         done.add(i)
     n = max(sheets) + 1 if sheets else 0
     for i, (pc, rot0) in enumerate(prepared):                  # bigger than a whole sheet (already flagged)
@@ -235,7 +257,7 @@ def _rect_nest(prepared, sheet, gap, margin):
     return [sheets[k] for k in sorted(sheets)]
 
 
-def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", label_inside=False):
+def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", place="part"):
     """Sets piece.place, .kerfed, .placed(+lines, marks), .label_pos, .leader. Returns sheet count.
 
     One sheet is one stock thickness. A part whose thickness was changed is cut from another piece of material, so
@@ -244,27 +266,54 @@ def nest(pieces, sheet, gap, margin, kerf=0.0, labels=False, font=4.0, tag="", l
     for pc in pieces:
         by_thick.setdefault(round(pc.parent.thickness, 6), []).append(pc)
     if len(by_thick) < 2:
-        return _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside)
+        return _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, place)
     n = 0
     for t in sorted(by_thick):
         group = by_thick[t]
-        used = _nest(group, sheet, gap, margin, kerf, labels, font, tag, label_inside)
+        used = _nest(group, sheet, gap, margin, kerf, labels, font, tag, place)
         for pc in group:
             pc.place = (pc.place[0] + n, *pc.place[1:])      # each group numbered after the ones before it
         n += used
     return n
 
 
-def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, label_inside):
+def _nest(pieces, sheet, gap, margin, kerf, labels, font, tag, place):
     k = kerf / 2
     prepared = []
     for pc in pieces:
         pc.kerfed = as_multi(pc.geom.buffer(k, join_style=2)) if k else pc.geom
-        prepared.append((pc, min_rect_angle(pc.kerfed)))
+        pc.nest_shape = pc.kerfed
+        if labels and place != "on":
+            # A part too small to carry even its bare name is nested with the room for that name reserved above it,
+            # so the label can sit right beside the part instead of wherever the packed sheet leaves a gap. The
+            # reserve is only ever a hole the nester keeps; the part's own outline is what is cut and labelled.
+            w, h = label_box(pc.label, font * 0.65)                           # the least the part could carry
+            keep = [mark_box(*m[:3], font, mark_rot(m)) for m in pc.marks] + [ln.buffer(0.8) for s, ln in pc.lines if s == "orient"]
+            if fit_on_part(pc.kerfed, [ln for s, ln in pc.lines if s == "guide"], w, h, keep, label_angles(pc.kerfed), room=min(2.0, 0.3 * font * 0.65)) is None:
+                x0, y0, x1, y1 = pc.kerfed.bounds; cx = (x0 + x1) / 2
+                pc.nest_shape = as_multi(unary_union([pc.kerfed, box(cx - w / 2, y1 + 1.0, cx + w / 2, y1 + 1.0 + h)]))
+        prepared.append((pc, min_rect_angle(pc.nest_shape)))
     sheets = _rect_nest(prepared, sheet, gap, margin) if len(prepared) > MANY else _poly_nest(prepared, sheet, gap, margin)
+    if len(prepared) <= MANY and len(sheets) > 1:
+        # the polygon nest fills bottom-left and lets a round part drop into the valley between two below it, which
+        # can cost a whole column (seven rings: five and two, where three and three would do); the plain rectangle
+        # packing is tried as well and kept when it takes fewer sheets, or as many with less on its emptiest one
+        # (seven rings: five and two, where six and one would do — the first sheet full, the last for the rest). The
+        # parts' own areas are compared: the polygon nest keeps grown outlines, and a part too big for the sheet
+        # takes a sheet of its own in a different place in each nest's order. Each nest writes every piece's
+        # placement, so the polygon one is put back when it stays: labels are placed against the outlines the
+        # pieces really have
+        kept = [(pc.place, pc.placed, pc.placed_lines, pc.placed_marks) for pc, _ in prepared]
+        rect = _rect_nest(prepared, sheet, gap, margin)
+        least = lambda ss: min(sum(pc.kerfed.area for pc in sh.pieces) for sh in ss)
+        if len(rect) < len(sheets) or (len(rect) == len(sheets) and least(rect) < least(sheets)):
+            sheets = rect
+        else:
+            for (pc, _), was in zip(prepared, kept):
+                pc.place, pc.placed, pc.placed_lines, pc.placed_marks = was
     if labels:
         for sh in sheets:
-            place_labels(sh, font, tag, label_inside)
+            place_labels(sh, font, tag, place)
     return max(1, len(sheets))
 
 
@@ -273,10 +322,16 @@ def _poly_nest(prepared, sheet, gap, margin):
     docstring), largest first; a part bigger than a sheet takes the sheet it lands on to itself."""
     W, H = sheet; half = gap / 2
     order = sorted(range(len(prepared)), key=lambda i: -prepared[i][0].kerfed.area)
+    grown_all = [pc.nest_shape.buffer(half + TOL, join_style=1) for pc, _ in prepared]   # half the gap on each part keeps them the gap apart
+    # a hole no part could go in — a dowel hole, a slot: smaller than the smallest part with its share of the gap — is
+    # filled before the outline is cut into convex pieces: each hole is a notch to that cut, and a stacked slice with
+    # thirty dowel holes blew past the piece cap and became its hull, which covered the big hollow in its middle
+    # that the small parts should have gone into
+    least = min(g.area for g in grown_all) if grown_all else 0.0
     sheets = [Sheet(W, H, margin)]
     for i in order:
         pc, rot0 = prepared[i]
-        grown = pc.kerfed.buffer(half + TOL, join_style=1)                 # half the gap on each part keeps them the gap apart
+        grown = _fill_small_holes(grown_all[i], least)
         # Douglas-Peucker, not the topology-preserving simplifier: GEOS 3.12 — the one Pyodide ships, so the browser
         # build — now and then throws "orientationIndex encountered NaN" from that one on a perfectly finite outline
         # (it reads memory it never wrote; the desktop's GEOS 3.13 does not). Both keep every point within TOL, which
@@ -323,42 +378,97 @@ def _poly_nest(prepared, sheet, gap, margin):
     return sheets
 
 
-def place_labels(sh, font, tag="", inside=False):
-    """Every part's label, either beside the part in free space with a leader to its outline, or — `inside` — engraved
-    on the part itself. A label placed inside sits within the next layer's outline where the piece carries one (the
-    stacked "engrave next layer" guide), so the layer glued on top hides it; a label too big for a small part is still
-    placed, on the part's widest spot and past its outline if it must, for the maker to trim in the laser software —
-    the one thing that never happens is a part coming out with no label at all."""
-    text = lambda pc: f"{tag} {pc.label}" if tag else pc.label        # `tag`: the model name engraved first
-    if inside:
-        for pc in sh.pieces:                                        # engraved on the part: no leader line to it
-            pc.label_pos = inside_spot(pc.placed, [ln for s, ln in pc.placed_lines if s == "guide"], *label_box(text(pc), font))
-            pc.leader = None
-        return
+def place_labels(sh, font, tag="", place="part"):
+    """Every part's label. `place` = "part": on the part itself where the whole label fits on its material — inside
+    the next layer's outline where the piece carries one (the stacked "engrave next layer" guide), so the layer glued
+    on top hides it, upright or turned along the part, clear of its marks and arrows — else beside the part in free
+    space, with a leader line to its outline; "beside": always beside; "on": always on the part. Free space is space
+    inside the sheet margin that no part (at the nesting gap), no earlier label and no leader line crosses, searched
+    outward from the part's outline, above it first. A label with no room at the job's font is tried smaller, down to
+    half, before it is put on the part's widest spot anyway, past its outline if it must, for the maker to trim in the
+    laser software — counted (`crowded`) so the plan can say so. The one thing that never happens is a part coming
+    out with no label at all."""
+    text = lambda pc, short=False: f"{tag} {pc.label}" if tag and not short else pc.label   # `tag`: the model's short name first
+    for g in sh.placed:
+        shapely.prepare(g)
     tree = STRtree(sh.placed)
     taken = []
-    for pc in sh.pieces:
-        w, h = label_box(text(pc), font)
-        x0, y0, x1, y1 = pc.placed.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        spots = []
-        for d in (1.0, 4.0, 8.0, 14.0, 22.0):
-            spots += [(cx, y1 + d + h / 2, 0), (x1 + d + w / 2, cy, 0), (cx, y0 - d - h / 2, 0), (x0 - d - w / 2, cy, 0),
-                      (x1 + d + h / 2, cy, 90), (x0 - d - h / 2, cy, 90)]
-        chosen = None
-        for lx, ly, rot in spots:
-            bw, bh = (w, h) if rot == 0 else (h, w)
-            rect = box(lx - bw / 2, ly - bh / 2, lx + bw / 2, ly + bh / 2)
-            if rect.bounds[0] < 0 or rect.bounds[1] < 0 or rect.bounds[2] > sh.W or rect.bounds[3] > sh.H:
-                continue
-            if any(rect.intersects(sh.placed[i]) for i in tree.query(rect)) or any(rect.intersects(t) for t in taken):
-                continue
-            chosen = (lx, ly, rot, rect); break
-        if chosen is None:                                          # crowded: inside the part, at its representative point
-            c = pc.placed.representative_point(); chosen = (c.x, c.y, 0, box(c.x - w / 2, c.y - h / 2, c.x + w / 2, c.y + h / 2))
-        lx, ly, rot, rect = chosen
-        taken.append(rect)
-        anchor = Point(lx, ly)
-        near = min((p.exterior for p in pc.placed.geoms), key=lambda r: r.distance(anchor))
-        q = near.interpolate(near.project(anchor))
-        pc.label_pos = (lx, ly, rot)
-        pc.leader = ((lx, ly), (q.x, q.y))
+    for k, pc in enumerate(sh.pieces):
+        keep = [mark_box(x, y, t, font, rot + pc.place[3]) for x, y, t, rot in pc.placed_marks] \
+            + [ln.buffer(0.8) for s, ln in pc.placed_lines if s == "orient"]
+        guides = [ln for s, ln in pc.placed_lines if s == "guide"]
+        angles = label_angles(pc.placed) if place != "beside" else ()
+        pc.crowded = False
+        sizes = [font * sc for sc in (1.0, 0.8, 0.65)]
+        # what may be engraved, best first: the full label at the font or a little under, then — a small part — the
+        # part's name alone, without the model's short name, which the assembly key allows for
+        forms = [(size, False) for size in sizes[:2]] + ([(size, True) for size in sizes[:2]] if tag else []) + [(sizes[2], False)] + ([(sizes[2], True)] if tag else [])
+        spot = None
+        if place != "beside":                                       # on the part
+            for size, short in forms:                             # down to two thirds of the font: a peg's name along the peg
+                w, h = label_box(text(pc, short), size)
+                spot = fit_on_part(pc.placed, guides, w, h, keep, angles, room=0.0 if place == "on" else min(2.0, 0.3 * size))
+                if spot:
+                    break
+        if spot is None and place == "on":
+            size, short = forms[-1]; spot = widest_spot(pc.placed)
+        if spot:
+            pc.label_pos, pc.leader, pc.label_size, pc.label_short = spot, None, size, short
+            taken.append(label_rect(*spot, *label_box(text(pc, short), size)))
+            continue
+        # beside the part: the nearest free spot wins, a smaller or shorter label close by over a full one far away;
+        # then free space anywhere on the sheet with a line across whatever lies between, rather than on a part the
+        # label would overrun, where it reads as part of the cut
+        boxes = [(size, short, *label_box(text(pc, short), size)) for size, short in forms]
+        found = _beside(k, pc, boxes, sh, tree, taken) or _beside(k, pc, boxes[2:], sh, tree, taken, across=True)
+        if found:
+            (pc.label_pos, pc.leader, rect), (pc.label_size, pc.label_short) = found[:3], found[3]
+            taken.append(rect)
+        else:                                                       # nowhere at all: the widest spot, counted
+            size, short = forms[-1]
+            pc.label_pos, pc.leader, pc.label_size, pc.label_short, pc.crowded = widest_spot(pc.placed), None, size, short, True
+            taken.append(label_rect(*pc.label_pos, *label_box(text(pc, short), size)))
+
+
+def _beside(k, pc, boxes, sh, tree, taken, across=False):
+    """A free spot for a label beside part k, at the first of `boxes` — (size, short, w, h), best first — that has one
+    on the nearest ring: ((x, y, rot), leader, rect, (size, short)) or None. Candidates lie on rings round the part's nested
+    outline at growing distances, above the part first, the label upright or on its side, its near edge on the ring;
+    a candidate is free when its box lies inside the sheet margin and touches no part, no label placed before it,
+    and the leader from it to the part's own outline crosses no other part — unless `across`, the last resort, which
+    lets the leader run over other parts and searches the whole sheet."""
+    part = pc.placed.simplify(0.5)                          # the real outline: the nesting one may hold the room reserved for this label
+    W, H, m = sh.W, sh.H, sh.margin
+    x0, y0, x1, y1 = pc.placed.bounds; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    for d in (0.8, 2.0, 3.5, 6.0, 10.0, 15.0, 22.0, 32.0, 45.0, 60.0, 85.0, 120.0) + ((170.0, 240.0, 340.0) if across else ()):
+        pts = []
+        for ring in (g.exterior for g in as_multi(part.buffer(d, join_style=1)).geoms):
+            n = max(12, int(ring.length / max(4.0, min(h for *_, h in boxes) / 2)))
+            pts += [ring.interpolate(i / n, normalized=True) for i in range(n)]
+        pts.sort(key=lambda q: abs((math.degrees(math.atan2(q.y - cy, q.x - cx)) - 90 + 180) % 360 - 180))   # above first, below last
+        for size, short, w, h in boxes:
+            for p in pts:
+                q = nearest_points(pc.placed, p)[0]                                   # where the leader lands: the part's own outline
+                nx, ny = p.x - q.x, p.y - q.y; L = math.hypot(nx, ny)
+                if L < 1e-6:
+                    continue
+                nx, ny = nx / L, ny / L
+                for rot in (0, 90):
+                    bw, bh = (w, h) if rot == 0 else (h, w)
+                    reach = abs(nx) * bw / 2 + abs(ny) * bh / 2                     # the box's near edge sits on the ring
+                    lx, ly = p.x + nx * reach, p.y + ny * reach
+                    rect = box(lx - bw / 2, ly - bh / 2, lx + bw / 2, ly + bh / 2)
+                    rx0, ry0, rx1, ry1 = rect.bounds
+                    mm = 0.0 if across else m                       # the last resort may use the margin band, as the title does
+                    if rx0 < mm or ry0 < mm or rx1 > W - mm or ry1 > H - mm:
+                        continue
+                    if rect.intersects(pc.placed) or any(i != k and sh.placed[i].intersects(rect) for i in tree.query(rect)) or any(rect.intersects(t) for t in taken):
+                        continue
+                    line = LineString([(lx, ly), (q.x, q.y)])
+                    if not across and any(i != k and sh.placed[i].intersects(line) for i in tree.query(line)):
+                        continue
+                    start = rect.exterior.intersection(line)                           # the leader leaves the label at its edge
+                    start = start.geoms[0] if start.geom_type.startswith("Multi") else start
+                    sx, sy = start.coords[0] if not start.is_empty else (lx, ly)
+                    return (lx, ly, rot), ((sx, sy), (q.x, q.y)), rect, (size, short)
+    return None

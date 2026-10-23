@@ -14,7 +14,7 @@ from shapely.ops import unary_union
 from shapely.strtree import STRtree
 from . import Mode, Param, register
 from ..model import Slice
-from ..geometry import as_multi, circle, rect_along, frame_xy
+from ..geometry import as_multi, circle, mark_box, mark_rot, rect_along, frame_xy
 from ..unfold import unfold
 
 JOINTS = ["seam", "tab", "multitab", "diamond", "ticked", "gear", "tongue", "puzzle", "rivet", "laced", "loops", "strip", "rib"]
@@ -86,9 +86,12 @@ class Folded(Mode):
     title = "Folded Panels"
     description = ("Unfolds the surface into flat panels with fold (score) lines, joined at the seams by tabs, holes, "
                    "strips or ribs. Works on any closed shape (heads, animals): cavities and undercuts just become more seams.")
-    legend = ("P-7 = the 7th panel · the number engraved beside a seam is the seam number, and the panel carrying the same "
-              "number on one of its edges is the one that edge folds to · S-n = the connecting strip for seam n, "
-              "R-n = the angle rib for seam n · on the score layer a solid line is a mountain fold, a dashed line a valley fold")
+    legend = ("P-7 = the 7th panel · every seam has a number, engraved on the tab (or beside the edge) on one panel and beside "
+              "the matching edge on the other: find the same number on two parts and those two edges go together, the number "
+              "reading along its edge · a cut edge with no number is an outside edge or one whose number had no room (the other "
+              "side of the seam still carries it) · S-n = the connecting strip for seam n, R-n = the angle rib for seam n · on "
+              "the score layer a solid line is a mountain fold, a dashed line a valley fold; the short score across a tab's "
+              "base is where the tab folds, the rest of the outline is cut")
     params = [
         Param("facet", "number", 15, "Detail: average triangle edge after simplification (mm). Bigger = fewer, simpler panels; joints need triangles a few times bigger than the joint. 0 = keep every triangle of the model", 0, 200, 1, unit="mm"),
         Param("separate", "bool", False, "Every face is its own panel (no folds): each triangle is cut alone and joined to its neighbours along every edge"),
@@ -159,6 +162,10 @@ class Folded(Mode):
         for sl in slices:
             for what, js in sl.skipped.items():
                 ids = ", ".join(map(str, sorted(set(js))[:12])) + (" …" if len(set(js)) > 12 else "")
+                if what == "seam number":
+                    sl.warnings.append(f"{len(set(js))} seam number(s) left off — no room beside the edge for a legible one (seams {ids}): "
+                                       f"the other side of each seam still carries it; a smaller font or a bigger facet size gives them room")
+                    continue
                 sl.warnings.append(f"{len(set(js))} seam(s) without a {what} — no room inside the triangle even after shrinking the joint (seams {ids}): "
                                    f"use fewer triangles (`simplify`), a bigger model, or smaller hole_d / inset / rib_w")
             if sl.reduced:
@@ -222,10 +229,34 @@ class Folded(Mode):
         return 180 - math.degrees(self.mesh.face_adjacency_angles[k]) if self.mesh.face_adjacency_convex[k] \
             else 180 + math.degrees(self.mesh.face_adjacency_angles[k])
 
-    def mark(self, s, j, depth):
-        if self.p["edge_labels"]:
-            m = (s["A"] + s["B"]) / 2 + s["n"] * min(depth, s["h"] * 0.5)
-            s["sl"].marks.append((float(m[0]), float(m[1]), str(j)))
+    def mark(self, s, j, depth, on_tab=False):
+        """The seam number beside edge A→B of side `s`, turned to read along the edge: on the tab itself where the
+        side carries one (`on_tab`, as Pepakura prints them — the tab is glued out of sight and has no fold across
+        it), else set `depth` in from the edge on the panel; at the first of a few spots (the middle of the edge
+        first, then towards its ends, then deeper in) where the whole number lies on material clear of the cuts, the
+        fold lines and the numbers already there. A seam with no such spot gets none, and the panel says how many:
+        a number over a fold or another number reads as neither."""
+        if not self.p["edge_labels"]:
+            return
+        p, sl = self.p, s["sl"]
+        text = str(j); A, d, n, L = s["A"], s["d"], s["n"], s["L"]
+        rot = math.degrees(math.atan2(d[1], d[0])) % 180
+        if rot > 90:
+            rot -= 180                                                      # never upside down in the panel's frame
+        if sl.room is None or len(sl.additions) != sl.room_tabs:            # the panel with the tabs it has so far, a hair in
+            sl.room = unary_union([sl.raw, *sl.additions]).buffer(-0.3); sl.room_tabs = len(sl.additions)
+        h = mark_box(0, 0, text, p["font"]).bounds[3] * 2
+        lines = [ln for _, ln in sl.lines]
+        deeps = ([-(h + 0.8)] if on_tab else []) + [depth, depth + p["font"] * 0.5, depth + p["font"]]   # on the tab: 0.8 mm past the hinge
+        for deep in deeps:
+            for along in (0.5, 0.35, 0.65, 0.22, 0.78):
+                c = A + d * (along * L) + n * (deep + h / 2)
+                b = mark_box(float(c[0]), float(c[1]), text, p["font"], rot)
+                if (sl.room.covers(b) and all(b.distance(cut) >= 0.3 for cut in sl.cuts) and all(b.distance(ln) >= 0.3 for ln in lines)
+                        and all(b.disjoint(mark_box(*m[:3], p["font"], mark_rot(m))) for m in sl.marks)):
+                    sl.marks.append((float(c[0]), float(c[1]), text, round(rot, 2)))
+                    return
+        sl.skipped.setdefault("seam number", []).append(j)
 
     def fit_sizes(self, sides):
         """Joint sizes that fit both triangles: holes at ≤ 20 % of the triangle height, ≤ 30 % wide; rib slots start at
@@ -396,16 +427,22 @@ class Folded(Mode):
         sl.marks.append((float(L * 0.5), float(t / 2 + w * 0.5), str(j)))
         return [sl]
 
-    def tabs(self, j, sides, jt, convex):
+    def tabs(self, j, sides, jt, convex, swapped=False):
+        """Tabs on side a of seam j, glued to side b. A tab that would land on its own panel (a concave net) is tried
+        from the other side first — the seam then has its tab on panel b, folded onto a — and only when neither
+        side has room is the seam left plain, with a warning."""
         p = self.p; t = self.t; a, b = sides
         inset, _, _ = self.fit_sizes(sides)
-        L = a["L"]; h = min(p["tab_h"], L * 0.6, b["h"] * 0.6); A, B, d, n = a["A"], a["B"], a["d"], a["n"]
+        L = a["L"]; h = min(p["tab_h"], L * 0.6, b["h"] * 0.6); A, d, n = a["A"], a["d"], a["n"]
         out = -n                                        # tabs protrude away from the panel
         tan = math.tan(math.radians(p["tab_angle"]))
+
+        hinges = []                                     # the base of each tab, where it folds: scored there and only there
 
         def trap(s0, s1, height, top_inset):
             x0, x1 = A + d * (s0 * L), A + d * (s1 * L)
             ti = min(top_inset, (s1 - s0) * L * 0.4)
+            hinges.append(LineString([x0, x1]))
             return Polygon([x0, x1, x1 - d * ti + out * height, x0 + d * ti + out * height])
         polys, bends = [], []
         if jt in ("tab", "tongue"):
@@ -434,17 +471,23 @@ class Folded(Mode):
                 c = (i + 0.5) / nt; hw = min(h * 0.6, L / nt * 0.4) / L
                 if jt == "multitab": polys.append(trap(c - hw, c + hw, h, h * tan))
                 elif jt == "gear":   polys.append(trap(c - hw, c + hw, h, 0))
-                else:                polys.append(Polygon([A + d * (c - hw) * L, A + d * (c + hw) * L, A + d * c * L + out * h]))   # diamond / ticked
-        # a tab may not land on the panel itself (concave layouts) — then it is a plain seam
+                else:                                 # diamond / ticked
+                    polys.append(Polygon([A + d * (c - hw) * L, A + d * (c + hw) * L, A + d * c * L + out * h]))
+                    hinges.append(LineString([A + d * (c - hw) * L, A + d * (c + hw) * L]))
+        # a tab may not land on the panel itself (concave layouts): the other side gets it, else it is a plain seam
         for poly in polys:
             if poly.intersection(a["sl"].raw).area > 0.02 * poly.area:
-                a["sl"].warnings.append(f"seam {j}: tab would overlap the panel — reduced to a plain seam (lower tab_h)")
+                if not swapped:
+                    return self.tabs(j, [b, a], jt, convex, swapped=True)
+                a["sl"].warnings.append(f"seam {j}: tab would overlap the panel on either side — reduced to a plain seam (lower tab_h)")
                 break
         else:
             a["sl"].additions += polys
-            a["sl"].lines.append(("solid" if convex else "dashed", LineString([A, B])))
+            # the hinge is scored across each tab's base, not along the whole seam edge: the rest of that edge is a cut,
+            # and a score under a cut is wasted on the laser and invisible on the part
+            a["sl"].lines += [("solid" if convex else "dashed", hl) for hl in hinges]
             a["sl"].lines += [("dashed", bl) for bl in bends]
             for poly in polys:
                 self.folded_tab(a, b, poly)
-        self.mark(a, j, p["font"] * 0.5)
+        self.mark(a, j, p["font"] * 0.5, on_tab=bool(polys) and polys[0] in a["sl"].additions)
         self.mark(b, j, (inset + t + p["font"] * 0.6) if jt in ("tongue", "puzzle") else p["font"] * 0.5)

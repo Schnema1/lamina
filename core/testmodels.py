@@ -73,6 +73,52 @@ def wavy_torus(size=316, led_d=7):
     return trimesh.util.concatenate([outer, channel]).apply_scale(1 / 3)
 
 
+def vase():
+    """A vase for the stacked spacing curve: a foot, a belly and a neck that flares at the lip — the radius changes
+    fast at the foot, the shoulder and the lip and hardly at all on the belly, so even slices waste layers on the belly
+    and miss the curves. Revolved from a profile; 54 mm tall before the ×3."""
+    z = np.linspace(0, 54, 60)
+    r = 10 + 12 * np.exp(-((z - 20) / 11) ** 2) + 3 * np.exp(-((z - 54) / 4) ** 2) + 2 * np.exp(-(z / 3) ** 2)   # belly, lip, foot
+    r[0] = 8
+    profile = np.c_[np.r_[0, r, 0], np.r_[z[0], z, z[-1]]]
+    m = trimesh.creation.revolve(profile, sections=96)
+    return m.apply_translation([0, 0, -27])
+
+
+def ripple():
+    """A block whose top is a ripple that tightens from one end to the other, for the interlocked spacing curves:
+    the first family needs close slices where the ripple is tight and few where it is slow, and the second family
+    runs along the ripple, where even spacing is right — one curve per family. 70 × 40 × 20 before the ×3."""
+    from shapely.geometry import Polygon
+    x = np.linspace(-35, 35, 141)
+    top = 14 + 5 * np.sin(0.09 * (x + 35) ** 1.45)                     # the chirp: slow on the left, tight on the right
+    poly = Polygon([(-35, 0), (35, 0)] + [(float(a), float(b)) for a, b in zip(x[::-1], top[::-1])])
+    m = trimesh.creation.extrude_polygon(poly, 40)                     # extruded along z; stood up so the ripple runs along x
+    m.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+    return m.apply_translation([0, 20, -7])
+
+
+def berry():
+    """A ball with a cluster of bumps on one side, for the radial spacing curve: the fan's planes should crowd the
+    bumpy side and spread on the smooth one — the curve round the axis, closing on itself."""
+    parts = [icosphere(4, 24)]
+    for a, el in ((0, 0.25), (0.5, -0.2), (-0.55, 0.05), (0.2, 0.7), (-0.15, -0.6)):
+        q = np.array([np.cos(a) * np.cos(el), np.sin(a) * np.cos(el), np.sin(el)]) * 23
+        parts.append(icosphere(3, 8).apply_translation(q))
+    return union(*parts)
+
+
+def hook():
+    """A tube that runs straight, bends through a right angle and runs on, for the curve technique's spacing curve:
+    ribs close together round the bend and far apart on the straights. A circle swept along the path, in the x–z
+    plane: 40 mm in along x, a quarter turn of 26 mm radius, 40 mm up along z."""
+    from shapely.geometry import Point
+    R = 26
+    arc = [(R * np.sin(a), 0, R - R * np.cos(a)) for a in np.linspace(0, np.pi / 2, 25)]
+    path = np.array([(-40, 0, 0)] + arc + [(R, 0, R + 40)])
+    return trimesh.creation.sweep_polygon(Point(0, 0).buffer(9, 32), path, cap=True)
+
+
 MODELS = {
     # geometric
     "cube": lambda: box([60, 60, 60]),
@@ -93,6 +139,11 @@ MODELS = {
     "bowl": bowl,
     "dumbbell": dumbbell,
     "wavy_torus": wavy_torus,
+    # for the drawn spacing curve, one per technique
+    "vase": vase,
+    "ripple": ripple,
+    "berry": berry,
+    "hook": hook,
 }
 
 if __name__ == "__main__":

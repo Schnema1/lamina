@@ -84,7 +84,7 @@ figure{margin:0}
    declared height fights max-width and squashes the image. The attributes stop the page reflowing 14 times. */
 img,video{max-width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;background:#0f1012}
 figcaption{color:var(--muted);font-size:13px;margin-top:8px}
-.grid{display:grid;gap:18px}
+.grid{display:grid;gap:18px}.cols{columns:2 320px;column-gap:28px}.cols li{break-inside:avoid}
 .g2{grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))}
 .g3{grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
@@ -133,6 +133,7 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
     <a href="#how">How it works</a>
     <a href="#techniques">Techniques</a>
     <a href="#folded">Folded panels</a>
+    <a href="#spacing">Spacing</a>
     <a href="#checks">Checks</a>
     <a href="#export">Export</a>
     <a href="#made">Gallery</a>
@@ -421,6 +422,28 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
   </figure>
 </div></section>
 
+<section id="spacing"><div class="wrap">
+  <h2>Draw the spacing</h2>
+  <p class="sub">Even spacing wastes slices where the shape barely changes and starves it where it does. Tick
+  <i>vary the spacing</i> and a graph appears under the 3D view: the distance between neighbouring slices against the
+  position along the model. Drag its points and the model re-slices as you let go.</p>
+  <figure>
+    <video src="media/spacing.mp4" poster="media/spacing_poster.jpg" width="1200" height="690"
+           muted loop playsinline controls preload="none"
+           aria-label="The vase sliced with a spacing curve; the curve's middle point dragged down, the slices crowding the waist, then back up"></video>
+    <figcaption>The vase: dense at the foot, the shoulder and the lip, sparse up the straight sides. The ticks under
+    the graph are where the slices went. Keep the count and the drawn spacings scale to span the model, or keep the
+    spacings and the count follows.</figcaption>
+  </figure>
+  <ul class="clean" style="margin-top:18px">
+    <li><b>Every technique</b> — stacked and curve along their length, interlocked with a graph per family, radial
+        as the angle between planes round the axis, periodic so the fan closes on itself. The curve never
+        overshoots its points. Four bundled examples open with one: the vase, a rippled slab, a berry and a hook.</li>
+    <li><b>Shift the stack</b> — move every stacked slice plane along the axis by the same amount, so one slice lands
+        on a rim, a shoulder or the middle of a hole instead of wherever the even spacing put the nearest one.</li>
+  </ul>
+</div></section>
+
 <section id="checks"><div class="wrap">
   <h2>It tells you what will not work — and offers the fix</h2>
   <p class="sub">Lamina checks the plan as a physical object, not just as geometry. Every message says what is wrong
@@ -434,7 +457,8 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
   <div class="grid g3" style="margin-top:22px">
     <div><h3>Held together</h3><p class="sub">Each region must reach the main body through a slot, a connector or
       glued contact. A head joined to nothing is reported as a separate group.</p></div>
-    <div><h3>Cuttable</h3><p class="sub">Parts too small or too thin to handle, bridges that snap, slots that sever
+    <div><h3>Cuttable</h3><p class="sub">Parts too small or too thin to handle, bridges that snap, tips and slivers
+      too thin for too long (the point of a radial slice, the wall left beside a slot — trimmed off blunt at a click), slots that sever
       a part, holes too close to an outline, two cuts overlapping.</p></div>
     <div><h3>Buildable</h3><p class="sub">Slices of one family that collide, radial slices meeting at the axis,
       slots opening away from the insertion direction, parts larger than the sheet.</p></div>
@@ -456,13 +480,22 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
   <div class="grid g2">
     <figure>
       <img src="media/sheets.jpg" width="2000" height="863" loading="lazy" decoding="async" alt="Two cut sheets with nested parts, labels beside each part">
-      <figcaption>Parts are rotated and packed against each other's outlines, not their bounding boxes — above 150
-      parts a rectangle packer takes over to keep the preview live. A layer that falls apart into separate pieces
-      is cut as separate parts, each nested on its own. Labels are engraved beside the part with a
-      leader line wherever there is room, or on the part itself if you ask — under the next layer of a stack, where
-      an engraved guide of that layer's outline shows you where it goes and the glue-up hides the name.</figcaption>
+      <figcaption>Parts are rotated and packed against each other's outlines, not their bounding boxes, and small
+      parts go into the hollows of big ones — above 150 parts a rectangle packer takes over to keep the preview
+      live. A layer that falls apart into separate pieces is cut as separate parts, each nested on its own. A label
+      goes on its part wherever the whole of it fits on the material, clear of holes, numbers and arrows; otherwise
+      beside it in free space with a leader line, never over another part.</figcaption>
     </figure>
-    <div>
+    <figure>
+      <img src="media/labels.jpg" width="2000" height="1290" loading="lazy" decoding="async" alt="A cut sheet close up: part names in a single-stroke font, a number beside every dowel hole, two small arrows at the middle of each part">
+      <figcaption>Everything engraved is drawn in a single-stroke font: a few open lines per letter, which the laser
+      runs in one pass in every format. Dowel <code>Z-3a</code> joins <code>Z-3</code> to <code>Z-4</code>, and
+      <code>3a</code> is engraved beside its hole on both — read a slice's holes by their numbers and the stack goes
+      together without the key. Two small arrows at each part's middle say which way is up and which face is the
+      front.</figcaption>
+    </figure>
+  </div>
+  <div class="cols" style="margin-top:24px">
       <ul class="clean">
         <li><b>SVG and DXF</b> with separate layers for outer cuts, inner cuts, score lines and labels, with or
             without the labels, in millimetres, centimetres or inches. The SVG opens directly in LightBurn, the
@@ -472,8 +505,11 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
             part, material, thickness and quantity (<code>egg_v1.0 R-1a plywood x2.svg</code>), and a cut list with
             each part's size. Every file starts with the design's name, so two designs' files never mix in one
             folder.</li>
-        <li><b>The model's name on every part</b> — <code>bunny Z-3</code> beside <code>egg Z-3</code>, so parts of
-            two models cut on the same day never get mixed up.</li>
+        <li><b>The model's name on every part</b>, as a code of up to four letters — <code>BUNN Z-3</code> beside
+            <code>EGG Z-3</code>, so parts of two models cut on the same day never get mixed up; type your own
+            short name if the derived one is not to your taste.</li>
+        <li><b>Each part is one group in the SVG</b> — its cuts, fold lines, numbers, arrows, label and leader line
+            together, so a part dragged elsewhere in Inkscape or Illustrator takes its labels with it.</li>
         <li><b>What it weighs</b> — the parts as cut, holes and slots taken out, each at its own thickness; the
             sheets you buy and lift onto the machine; and the dowels, for what the finished model weighs. Grams and
             kilograms, or ounces and pounds when you work in inches. It matters most for big pieces and for metal,
@@ -496,7 +532,6 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
         <li><b>Kerf and fit</b> — kerf compensation when your machine does not do its own (off by default), a fit
             offset on every slot, dog-bone relief for routers, and a 10 cm or 4 in scale-check bar on every export.</li>
       </ul>
-    </div>
   </div>
   <figure style="margin-top:24px">
     <img src="media/export.jpg" width="2000" height="963" loading="lazy" decoding="async" alt="The export tab with what the job weighs, download links and prototyping options">
@@ -540,9 +575,9 @@ footer{border-top:1px solid var(--line);padding:32px 0;color:var(--muted);font-s
     <div><h3>Not there yet</h3><p class="sub">Seams are chosen automatically — you cannot click an edge to add or
       remove one. Insertion is simulated as a straight slide along each crossing line — a part that would have to
       turn or flex on its way in is not caught.</p></div>
-    <div><h3>Where it gets rough</h3><p class="sub">Nesting is greedy: parts go to the corners other parts leave,
-      so concave shapes that would need to slide into each other pack looser than a no-fit-polygon nester would
-      manage. A detailed folded model takes a few seconds per change.</p></div>
+    <div><h3>Where it gets rough</h3><p class="sub">Nesting is greedy: each part takes the lowest, leftmost spot its
+      no-fit polygons leave, so two concave shapes that would need to slide into each other pack looser than they
+      could. A detailed folded model takes a few seconds per change.</p></div>
     <div><h3>What you need</h3><p class="sub">Python 3.11 to 3.14 (uv fetches it), <a href="https://docs.astral.sh/uv/">uv</a>, and
       a browser with WebGL — or just Docker. Several people can share one server, each browser tab with its own
       session, but Lamina has no login of its own: put it behind your proxy's authentication before it faces the

@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools, math
 import numpy as np
 import shapely
+from shapely.errors import GEOSException
 import shapely.affinity
 import trimesh
 from shapely.geometry import Polygon, MultiPolygon, Point, LineString, MultiLineString, box
@@ -136,60 +137,162 @@ def as_lines(g) -> MultiLineString:
     return MultiLineString([l for l in shapely.get_parts(g) if isinstance(l, LineString)])
 
 
+def robust(op, *geoms, default=None):
+    """`op(*geoms)`, and when the geometry engine throws — the browser build's GEOS now and then reports
+    "orientationIndex encountered NaN/Inf" from an overlay or an inscribed circle on a perfectly finite outline, where
+    the desktop's never does — the same once more on precision-snapped copies (the snapping overlay is the robust
+    one), else `default`: a label that goes beside its part, a thin spot not reported, beats a model that will not slice."""
+    try:
+        return op(*geoms)
+    except GEOSException:
+        try:
+            return op(*[shapely.set_precision(q, 1e-6) for q in geoms])
+        except GEOSException:
+            return default
+
+
 def label_box(text, font):
-    """The room an engraved label takes at `font` mm: (w, h), about 0.62 em a character and an em of 1.4 capitals, never
-    under 6 mm wide. The sheet placement and the per-piece export size a label the same way through this."""
-    return max(6.0, 0.62 * font * len(text) + 2), font * 1.4
+    """The room an engraved label takes at `font` mm (the height of a capital): (w, h) — the stroke font's own width
+    with a millimetre either side, never under 6 mm, and 1.4 capitals, which holds the descenders. The sheet
+    placement and the per-piece export size a label the same way through this."""
+    from .font import width
+    return max(6.0, width(text, font) + 2), font * 1.4
 
 
-def label_spot(mp, w, h, prefer=None):
-    """Where to put a w × h label on a part: the centre of a block that lies inside `prefer` (when given) or `mp` —
-    tried upright and turned 90° — or, when no whole block fits, the widest spot there is, so a label is never left
-    off. Returns (x, y, rotation in degrees)."""
-    mp = as_multi(mp)
-    if mp.is_empty:
-        return (0.0, 0.0, 0)
-    for cand in (prefer, mp):
-        if cand is None or cand.is_empty:
-            continue
-        spot = _fits_block(cand, w, h)
-        if spot:
-            return spot
-    best = max((shapely.maximum_inscribed_circle(g, 0.5) for g in mp.geoms), key=lambda c: c.length)
-    return (float(best.coords[0][0]), float(best.coords[0][1]), 0)
+def mark_box(x, y, text, font, rot=0.0):
+    """The room a small engraved mark (a seam or dowel number, at 0.6 of the font) takes, centred on (x, y) and turned
+    `rot` degrees — the mark's own turn in its part's frame; a mark on a nested part is turned by the placement too."""
+    from .font import width
+    s = font * 0.6
+    b = box(x - (width(text, s) + 0.6) / 2, y - s * 0.7, x + (width(text, s) + 0.6) / 2, y + s * 0.7)
+    return shapely.affinity.rotate(b, rot, origin=(x, y)) if rot else b
 
 
-def inside_spot(region, guides, w, h):
-    """Where to engrave a w × h label on a part: inside the next layer's outline when the part carries one (`guides`,
-    the stacked guide lines, in `region`'s frame), so the layer glued on top hides it, otherwise on the part's own
-    widest spot. The next layer's footprint is rebuilt from the guide lines — the ring they enclose — and only used if
-    the label fits inside it. A label that fits nowhere is still given the part's widest clearance rather than left
-    off, so the maker trims it in the laser software instead of finding a part they cannot place. The sheet placement
-    and the per-piece export both come through here, so a part's label lands in the same place in both."""
+def mark_rot(m):
+    """A mark's own turn, 0 for the three-value marks."""
+    return float(m[3]) if len(m) > 3 else 0.0
+
+
+def label_rect(x, y, rot, w, h):
+    """A w × h label's box, centred on (x, y) and turned `rot` degrees, as the sheet carries it."""
+    return shapely.affinity.rotate(box(x - w / 2, y - h / 2, x + w / 2, y + h / 2), rot, origin=(x, y))
+
+
+def fit_block(region, w, h, angles=(0, 90)):
+    """Centre and turn of a w × h block lying wholly inside `region` (holes respected), or None. For each turn the
+    region is laid flat along it and eroded by the block — the region overlapped with itself moved by each corner and
+    each edge middle of the block, a quick stand-in for the exact erosion — and the roomiest spot of what is left
+    (the centre of its largest inscribed circle) is checked exactly."""
     region = as_multi(region)
-    cover = None
-    if guides:
-        loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
-        # a ring inside a ring is the layer above's hole (its inner edge is engraved too): the face it encloses is
-        # not covered, so a label there would show through
-        loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
-        if loops:
-            under = shapely.union_all(loops).intersection(region)
-            if not under.is_empty:
-                cover = under
-    return label_spot(region, w, h, cover)                          # the next layer's footprint first, then the whole part
-
-
-def _fits_block(mp, w, h):
-    """Centre and rotation of a w × h block lying inside `mp`, or None. The largest inscribed circle's centre is where
-    a block has the most clearance, so it is tried first; holes are respected, since `covers` sees them."""
-    for g in sorted(as_multi(mp).geoms, key=lambda p: -p.area):
-        px, py = shapely.maximum_inscribed_circle(g, 0.5).coords[0]
-        for rot in (0, 90):
-            bw, bh = (w, h) if rot == 0 else (h, w)
-            if g.covers(box(px - bw / 2, py - bh / 2, px + bw / 2, py + bh / 2)):
-                return (float(px), float(py), rot)
+    if region.is_empty:
+        return None
+    for ang in angles:
+        R = shapely.affinity.rotate(region, -ang, origin=(0, 0)) if ang else region
+        E = R
+        for dx, dy in ((w / 2, h / 2), (-w / 2, h / 2), (w / 2, -h / 2), (-w / 2, -h / 2), (w / 2, 0), (-w / 2, 0), (0, h / 2), (0, -h / 2)):
+            E = robust(lambda a, b: a.intersection(b), E, shapely.affinity.translate(R, dx, dy))
+            if E is None or E.is_empty:
+                break
+        if E is None:
+            continue
+        for piece in sorted(as_multi(E).geoms, key=lambda q: -q.area):
+            disc = robust(lambda q: shapely.maximum_inscribed_circle(q, 0.5), piece)
+            for cx, cy in ([disc.coords[0]] if disc is not None else []) + [piece.representative_point().coords[0]]:
+                if R.covers(box(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)):
+                    x, y = shapely.affinity.rotate(Point(cx, cy), ang, origin=(0, 0)).coords[0] if ang else (cx, cy)
+                    return (float(x), float(y), float(ang))
     return None
+
+
+def covered(region, guides):
+    """The part of `region` the next layer covers, rebuilt from the guide lines (the stacked "engrave next layer"
+    outline): the rings they enclose, less a ring inside a ring, which is the layer above's hole — its inner edge is
+    engraved too, and a label under it would show through. None when the part carries no guide."""
+    if not guides:
+        return None
+    loops = [g for g in shapely.polygonize(guides).geoms if getattr(g, "area", 0) > 0]
+    loops = [g for g in loops if not any(o is not g and Polygon(o.exterior).contains(g) for o in loops)]
+    if not loops:
+        return None
+    under = shapely.union_all(loops).intersection(region)
+    return None if under.is_empty else under
+
+
+def fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
+    return robust(lambda r: _fit_on_part(r, guides, w, h, marks, angles, room), region, default=None)
+
+
+def _fit_on_part(region, guides, w, h, marks=(), angles=(0, 90), room=0.0):
+    """Where a w × h label fits whole on a part's material with `room` to spare all round: inside the next layer's
+    outline when the part carries one (`guides`), so the layer glued on top hides it, else anywhere on the part —
+    clear of its holes and of the marks and arrows (boxes) already engraved on it — at the first of `angles` that
+    holds it. None when it fits nowhere: a label crammed against the edge of a small part is better off beside it."""
+    region = as_multi(region)
+    if marks:
+        region = robust(lambda a, b: as_multi(a.difference(b)), region, unary_union([m.buffer(0.5) for m in marks]), default=region)
+    for cand in (covered(region, guides), region):
+        if cand is not None and not cand.is_empty:
+            spot = fit_block(cand, w + 2 * room, h + 2 * room, angles)
+            if spot:
+                return spot
+    return None
+
+
+def widest_spot(region):
+    return robust(lambda r: _widest_spot(r), region, default=(0.0, 0.0, 0.0))
+
+
+def _widest_spot(region):
+    """The spot on a part with the most clearance all round — the centre of its largest inscribed circle: where a
+    label that fits nowhere whole is still put, overrunning the outline, for the maker to trim rather than left off."""
+    region = as_multi(region)
+    if region.is_empty:
+        return (0.0, 0.0, 0.0)
+    discs = [d for d in (robust(lambda q: shapely.maximum_inscribed_circle(q, 0.5), g) for g in region.geoms) if d is not None]
+    if not discs:
+        return (0.0, 0.0, 0.0)
+    best = max(discs, key=lambda c: c.length)
+    return (float(best.coords[0][0]), float(best.coords[0][1]), 0.0)
+
+
+def orient_arrows(region, longest=8.0, keep=()):
+    return robust(lambda r: _orient_arrows(r, longest, keep), region, default=[])
+
+
+def _orient_arrows(region, longest=8.0, keep=()):
+    """Two arrows at a part's widest spot, on the LABEL layer: one up its frame's y, one shorter to the right along
+    x, so every part of a model carries the same two directions and the engraved face is known to be the front. As
+    (style, LineString) lines, shaft and head each, sized to the clearance there, clear of `keep` (the marks already
+    engraved, as boxes); none on a part too small to hold a legible pair."""
+    region = as_multi(region)
+    if keep:
+        region = robust(lambda a, b: as_multi(a.difference(b)), region, unary_union([k.buffer(0.6) for k in keep]), default=region)
+    if region.is_empty:
+        return []
+    discs = [d for d in (robust(lambda q: shapely.maximum_inscribed_circle(q, 0.5), g) for g in region.geoms) if d is not None]
+    if not discs:
+        return []
+    disc = max(discs, key=lambda c: c.length)
+    (cx, cy), r = disc.coords[0], disc.length
+    L = min(longest, 0.6 * r)                   # well inside the clearance: on a small part the arrows must not read as its edge
+    if L < 3.0:
+        return []
+    out = []
+    for dx, dy, length in ((0, 1, L), (1, 0, 0.65 * L)):
+        tx, ty = cx + dx * length, cy + dy * length                      # the tip
+        h = 0.3 * length; px, py = -dy, dx                                  # the head's half-width, across the shaft
+        out.append(("orient", LineString([(cx, cy), (tx, ty)])))
+        out.append(("orient", LineString([(tx - dx * h - px * h * 0.6, ty - dy * h - py * h * 0.6), (tx, ty), (tx - dx * h + px * h * 0.6, ty - dy * h + py * h * 0.6)])))
+    return out
+
+
+def label_angles(region):
+    """The turns to try a label on a part at: upright, a quarter turn, and along the part's long side and across it
+    when that side is not already square to the sheet."""
+    long = -min_rect_angle(region) % 180
+    if long > 90:
+        long -= 180                                           # never upside down
+    return (0, 90) if min(abs(long) % 90, 90 - abs(long) % 90) < 5 else (0, 90, round(long, 1), round(long + 90 if long < 0 else long - 90, 1))
 
 
 def line_segments_in_mesh(mesh, p0, d, span) -> list[tuple[float, float]]:
@@ -291,3 +394,43 @@ def poly_coords(mp: MultiPolygon) -> list:
 
 def line_coords(ml) -> list:
     return [list(map(list, np.round(np.asarray(l.coords), 4))) for l in as_lines(ml).geoms]
+
+
+def thin_spots(region, mf):
+    return robust(lambda r: _thin_spots(r, mf), region, default=[])
+
+
+def _thin_spots(region, mf):
+    """The parts of `region` too thin for too long to survive the cutter or the hand — the point of a slice that
+    meets the surface at a grazing angle, a wall left between a slot and the edge — as polygons: what an opening
+    (erode, then dilate) takes off, kept where it runs long enough to matter. Two sizes: thinner than `mf` for 2 × `mf`,
+    or thinner than 1.5 × `mf` for 4 × `mf` and at least three times as long as wide (a spike, not the scalloped edge
+    of a scanned model, whose every shallow wave the wider opening takes a shaving off). A square or 45° corner loses
+    less than that and is not one. A bridge thinner than `mf` between two bodies is also among them; `trim_thin`
+    leaves those alone (see there)."""
+    out = []
+    for w, length, ratio in ((mf, 2 * mf, 0.0), (1.5 * mf, 4 * mf, 3.0)):
+        thin = robust(lambda q, half=w / 2: q.difference(q.buffer(-half).buffer(half + 0.05)), region)
+        if thin is None:
+            continue
+        for piece in as_multi(thin).geoms:
+            a, b = min_dims(piece)
+            if piece.area > 0.1 * w * w and b >= length and b >= ratio * a and not any(piece.intersects(q) for q in out):   # one spot, not one per size
+                out.append(piece)
+    return out
+
+
+def trim_thin(region, mf):
+    return robust(lambda r: _trim_thin(r, mf), region, default=(region, 0))
+
+
+def _trim_thin(region, mf):
+    """`region` with its thin tips and slivers cut off — a blunt end where the point was, a slot open to the edge
+    where the wall beside it was — and how many went. A thin spot whose removal would split the region (a bridge)
+    stays: that is a part in two pieces, which the check reports as such."""
+    n = 0
+    for piece in thin_spots(region, mf):
+        cut = robust(lambda a, b: as_multi(a.difference(b)), region, piece.buffer(0.02, join_style=2))
+        if cut is not None and len(cut.geoms) == len(region.geoms) and not cut.is_empty:
+            region = cut; n += 1
+    return region, n

@@ -11,7 +11,7 @@ from shapely import affinity
 from shapely.geometry import MultiPolygon, MultiLineString, MultiPoint
 from shapely.ops import unary_union
 from .modes import load_all, Ctx
-from .geometry import section_polygons, as_multi, poly_coords, line_coords, min_dims, min_rect_angle
+from .geometry import section_polygons, as_multi, poly_coords, line_coords, mark_box, mark_rot, min_dims, min_rect_angle, orient_arrows, trim_thin
 from .checks import STRUCTURAL, check_plan, suggest_fixes, crossing_suggestions
 from .split import split_slice, fits_rotated, islands
 from .nest import nest
@@ -63,6 +63,8 @@ def coerce_params(mode, raw: dict) -> dict:
         p["autofix"] = "off" if str(p.get("autofix")).lower() in ("false", "0", "remove") else "add"
     if "cloth" in raw and "separate" not in raw:                    # older names
         p["separate"] = bool(raw["cloth"])
+    if "label_inside" in raw and "label_place" not in raw:          # a project saved when labels were a tickbox: on the parts, or beside them
+        p["label_place"] = "on" if str(raw["label_inside"]).lower() in ("true", "1") else "beside"
     if "simplify" in raw and "facet" not in raw and "facet" in p and raw["simplify"] in (0, "0"):
         p["facet"] = 0
     return p
@@ -474,7 +476,7 @@ def mark_identical(pieces, mirror=False, tol=1e-3):
             continue
         a = min_rect_angle(pc.kerfed)
         g = affinity.rotate(pc.kerfed, a, origin=(0, 0)); x0, y0, _, _ = g.bounds; g = affinity.translate(g, -x0, -y0)
-        ge = _moved((MultiLineString([ln for _, ln in pc.lines]), MultiPoint([(x, y) for x, y, _ in pc.marks]), [t for *_, t in pc.marks]), a, x0, y0)
+        ge = _moved((MultiLineString([ln for _, ln in pc.lines]), MultiPoint([m[:2] for m in pc.marks]), [m[2] for m in pc.marks]), a, x0, y0)
         for first, c, ce in groups:
             # same outline but cut from other stock is not the same part: it belongs on the other thickness's sheet
             kind = _match(c, g, tol, mirror, ce, ge) if first.parent.thickness == pc.parent.thickness else None
@@ -539,7 +541,7 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         progress("placing slices and slots" + again, 0.2)
         ctx = Ctx(mesh, p)
         slices = mode.build(ctx)
-        kept, shaved, grazed = _profiles(slices, mesh, p, again)
+        kept, shaved, grazed, trimmed = _profiles(slices, mesh, p, again)
         mode.guide_outlines(ctx, kept)                # on the finished outlines: grown, slivers shed
         dropped = [s for s in slices if s not in kept and s.label not in grazed]
         slices = kept
@@ -555,6 +557,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
                 p[k] = sorted(set(map(float, p[k])) | set(map(float, v))) if isinstance(v, list) else v
         notes.append(f"auto-fix: added crossing slices ({len(adds)}) so every region is held")
     _run.band = (0.0, 1.0)                          # the passes are over: the last stages own the rest of the bar
+    if trimmed:
+        notes.append(f"{trimmed} thin spot(s) trimmed off the parts (trim_thin): a tip or sliver too thin for too long, which would have broken off — the part ends blunt there, a little short of the model")
     if shaved:
         notes.append(f"{shaved} sliver(s) thinner than {p['min_feature']:g} mm everywhere left out: shavings a slot cuts off its own part, "
                      f"and specks under {p['min_part']:g} mm where a slice only grazes the surface — too small to cut or handle")
@@ -570,9 +574,15 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
             sl.pieces = islands(sl) if sl.facets is None else [Piece(sl.label, sl.profile, sl, sl.lines, sl.marks)]   # a folded net stays whole
     n_err += _oversize(slices, p, sheet0, mesh, ctx)
     pieces = [pc for sl in slices for pc in sl.pieces]
+    if p["orient_mark"]:                               # the same two directions on every part: which way is up, which face is the front
+        for pc in pieces:                               # placed after the dowel and seam marks, in the room they leave
+            pc.lines = pc.lines + orient_arrows(pc.geom, keep=[mark_box(*m[:3], p["font"], mark_rot(m)) for m in pc.marks])
     kerf = p["kerf"] if p["compensate"] else 0.0       # off by default: many machines compensate their own kerf
     tag = label_tag(p, model_path)                     # the model's name, engraved before every label: nested with room for it
-    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["labels"], p["font"], tag, p["label_inside"])
+    n_sheets = nest(pieces, p["sheet"], p["gap"], p["sheet_margin"], kerf, p["labels"], p["font"], tag, p["label_place"])
+    if crowded := [pc.label for pc in pieces if pc.crowded]:
+        notes.append(f"no free spot beside {len(crowded)} part(s) for their labels ({', '.join(crowded[:6])}{'…' if len(crowded) > 6 else ''}): "
+                     "they sit on the part, overrunning it where it is small — a smaller font, a bigger gap or sheet, or `label_model` off gives them room")
     mark_identical(pieces, p["mirror_ok"])             # which parts are the same part: one cut file, one row, a quantity
     # puzzle mode: what gets engraved is a code with no order in it. The plan keeps the real labels — the app, the
     # checks and the 3D view are the "plans" you consult when you give up — and the export carries the key.
@@ -600,7 +610,8 @@ def build(model_path, mode_name, raw_params, out=None, mesh_out=None):
         "curve3d": ctx.curve3d, "curve_pts": ctx.curve_pts,
         "axes3d": ctx.axes3d,                                                # radial's fan axes, curve's branches: drawn and dragged in 3D
         "bounds3d": ctx.bounds3d,                                            # the planes between lobes or at a branch's joint, moved and tilted like slices
-        "rods": ctx.rods,                                                    # dowel rods for the 3D view: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis]
+        "spacing": ctx.spacing,                                              # what the drawn spacing curves gave: positions along each axis, for the graph
+        "rods": ctx.rods,                                                    # dowel rods for the 3D view and the key: [[x0,y0,z0],[x1,y1,z1],d,section [[x,y]…] in the slice's x/y,slice x axis,name (Z-3a),from slice,to slice]
         "params_used": {k: p[k] for k in ("extra_x", "extra_y", "ring_count") if k in p},   # what autofix=add changed
         "sheets": n_sheets, "sheet": sheet_out, "sheet_thick": sheet_thick, "kerf": kerf,
         "counts": {"slices": len(slices), "parts": len(pieces), "errors": n_err, "warnings": n_warn, "faces": int(len(mesh.faces))},
@@ -626,7 +637,7 @@ def _profiles(slices, mesh, p, again):
     """Each slice sectioned and its cuts taken out: the kept slices with `profile` set, how many slivers came off, and
     the labels of slices that only grazed the model (a speck, not a part, not an error). A slice the plane misses, or
     whose cuts leave nothing, says so and is dropped."""
-    kept, shaved, grazed = [], 0, set()
+    kept, shaved, grazed, trimmed = [], 0, set(), 0
     for i, sl in enumerate(slices):         # sections → profiles (modes may hand over a finished `raw` for synthetic parts)
         progress(f"sectioning{DETAIL}{i + 1} of {len(slices)}{again}", 0.35 + 0.35 * i / len(slices))
         sectioned = sl.group in STRUCTURAL       # a plane through the model, not a part the technique draws (peg, panel, strip)
@@ -645,6 +656,9 @@ def _profiles(slices, mesh, p, again):
         if sectioned and not prof.is_empty:
             prof, n = shed_slivers(sl.raw, prof, sl.cuts, p["min_feature"], p["min_part"])
             shaved += n
+            if p.get("trim_thin") and not prof.is_empty:
+                prof, n = trim_thin(prof, p["min_feature"])
+                trimmed += n
             if prof.is_empty:                    # a speck and nothing else: not a part, not an error
                 grazed.add(sl.label)
                 continue
@@ -653,7 +667,7 @@ def _profiles(slices, mesh, p, again):
             continue
         sl.profile = prof
         kept.append(sl)
-    return kept, shaved, grazed
+    return kept, shaved, grazed, trimmed
 
 
 def _oversize(slices, p, sheet0, mesh, ctx):
@@ -696,9 +710,9 @@ def _slice_json(sl):
                     "placed": poly_coords(pc.placed),        # sheet coordinates, kerf applied
                     "lines": [[s, line_coords(l)[0]] for s, l in pc.placed_lines],   # fold and guide lines on the sheet
                     "kerfed_lines": [[s, line_coords(l)[0]] for s, l in pc.lines],   # the same in the part's own frame (per-piece export)
-                    "marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.placed_marks],
-                    "kerfed_marks": [[round(x, 3), round(y, 3), t] for x, y, t in pc.marks],
-                    "label_pos": pc.label_pos, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
+                    "marks": [[round(m[0], 3), round(m[1], 3), m[2], round(mark_rot(m), 2)] for m in pc.placed_marks],
+                    "kerfed_marks": [[round(m[0], 3), round(m[1], 3), m[2], round(mark_rot(m), 2)] for m in pc.marks],
+                    "label_pos": pc.label_pos, "label_size": pc.label_size, "label_short": pc.label_short, "leader": pc.leader, "same": pc.same, "flipped": pc.flipped,
                     "area": round(float(pc.geom.area), 3),   # net of holes and slots: × its slice's thickness × density = its weight
                     } for pc in sl.pieces],
     }
