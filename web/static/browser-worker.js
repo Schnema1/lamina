@@ -44,11 +44,22 @@ onmessage = async e => {
     const ex = field('example') || (job.startsWith('ex_') ? job.slice(3) : '');
     if (/^[A-Za-z0-9_-]+$/.test(ex) && !py.FS.analyzePath(`${EXAMPLES}/${ex}.stl`).exists)
       py.FS.writeFile(`${EXAMPLES}/${ex}.stl`, new Uint8Array(await (await fetch(`py/examples/${ex}.stl`)).arrayBuffer()));
-    const r = handle(m.method, m.path, m.query, py.toPy(m.form)), [status, headers, raw] = r.toJs({dict_converter: Object.fromEntries});
-    let body = raw; if (!(raw instanceof Uint8Array)) { const b = raw.getBuffer(); body = b.data.slice(); b.release(); raw.destroy() }
-    r.destroy();
+    const attempt = () => {
+      const r = handle(m.method, m.path, m.query, py.toPy(m.form)), [status, headers, raw] = r.toJs({dict_converter: Object.fromEntries});
+      let body = raw; if (!(raw instanceof Uint8Array)) { const b = raw.getBuffer(); body = b.data.slice(); b.release(); raw.destroy() }
+      r.destroy();
+      return {status, headers, body};
+    };
+    let out;
+    try { out = attempt() } catch (err) {
+      // GEOS's "orientationIndex encountered NaN/Inf" is this build's heap under pressure, not the model (the same
+      // request on the same model goes through the next time): collect, and once more
+      if (!/orientationIndex encountered NaN/.test(String(err))) throw err;
+      py.runPython('import gc; gc.collect()');
+      out = attempt();
+    }
     if (m.method !== 'GET') py.FS.syncfs(false, () => {});
-    postMessage({status, headers, body});
+    postMessage(out);
     // A plan is a graph with back-references — every piece names its slice, every slice holds its pieces — so it
     // only goes when the cyclic collector runs. Left to itself that is not before the next slice asks for its own
     // arrays, and a heap under that much pressure stops giving GEOS numbers it can work with: slicing the same

@@ -49,12 +49,12 @@ const params = async p => {
 };
 // what the fix buttons do (grow an outline, move a slice) and the curve's points and branches, applied as the app applies them
 const fix = async set => { await js(`window.__t.applyFix(${JSON.stringify(set)})`); await settle(); };
-// whatever warning is left on screen, take the app's own first offer for it (grow the outline, move the slice),
-// one at a time, as a user would: the project file then carries those fixes too
+// whatever warning is left on screen, take the app's own first offer for it (trim the thin spots, grow the outline,
+// move the slice), one at a time, as a user would: the project file then carries those fixes too
 const heal = async (rounds = 12) => {
     const seen = {};
     for (let r = 0; r < rounds; r++) {
-        const b = await js(`(()=>{const b=[...document.querySelectorAll('#lower .msg .fix')].find(x=>/^(grow|move) /.test(x.textContent));return b?{text:b.textContent,set:JSON.parse(b.dataset.fix)}:null})()`);
+        const b = await js(`(()=>{const b=[...document.querySelectorAll('#lower .msg .fix')].find(x=>/^(trim|grow|move) /.test(x.textContent));return b?{text:b.textContent,set:JSON.parse(b.dataset.fix)}:null})()`);
         if (!b) break;
         // a button sets its value rather than adding to it, so the same offer a second time is applied doubled
         const n = seen[b.text] = (seen[b.text] || 0) + 1;
