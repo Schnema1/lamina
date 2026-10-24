@@ -489,6 +489,16 @@ def test_folded_seam_numbers_sit_on_material_clear_of_cuts_and_folds_and_tabs_fo
     assert len(numbers) >= 7 and seen + left_off == 2 * len(numbers)                     # every seam numbered on both sides, or counted
 
 
+@pytest.mark.timeout(120)
+def test_a_dense_net_numbers_its_seams_in_seconds_not_minutes():
+    """A rounded-off model folds into a net whose panels each carry hundreds of seam numbers to keep apart: the cube
+    thickened by 50 took 155–175 s before 0.3.0 shipped (15 s in 0.2.5), testing each spot against every number,
+    cut and fold one by one (bugs/028); about 38 s since. The numbers are all still placed."""
+    plan = build(EXAMPLES / "cube.stl", "folded", {"thickness": 6, "thicken": 50})
+    marks = [m for sl in plan["slices"] for pc in sl["pieces"] for m in pc["marks"]]
+    assert len(marks) > 1000 and all(m[2].isdigit() for m in marks)
+
+
 def test_orientation_arrows_are_two_lines_inside_every_part_clear_of_its_marks():
     """`orient_mark` engraves two arrows at the middle of each part, the same two directions on every part, inside the
     material and touching no dowel number; off, a part carries none."""

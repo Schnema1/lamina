@@ -246,14 +246,22 @@ class Folded(Mode):
         if sl.room is None or len(sl.additions) != sl.room_tabs:            # the panel with the tabs it has so far, a hair in
             sl.room = unary_union([sl.raw, *sl.additions]).buffer(-0.3); sl.room_tabs = len(sl.additions)
         h = mark_box(0, 0, text, p["font"]).bounds[3] * 2
-        lines = [ln for _, ln in sl.lines]
+        # a panel collects hundreds of numbers and holes on a dense mesh: each number is boxed once, and a spot is
+        # measured only against what lies within reach of it (one by one against all, it took minutes, bugs/028)
+        sl.mark_boxes += [mark_box(*m[:3], p["font"], mark_rot(m)) for m in sl.marks[len(sl.mark_boxes):]]
+        clear, taken = np.array([*sl.cuts, *(ln for _, ln in sl.lines)], dtype=object), np.array(sl.mark_boxes, dtype=object)
+        near_clear, near_taken = STRtree(clear), STRtree(taken)
+
+        def free(b):
+            x0, y0, x1, y1 = b.bounds; reach = shapely.box(x0 - 0.3, y0 - 0.3, x1 + 0.3, y1 + 0.3)   # 0.3 mm off cuts and folds
+            return ((shapely.distance(b, clear[near_clear.query(reach)]) >= 0.3).all()
+                    and shapely.disjoint(b, taken[near_taken.query(b)]).all())
         deeps = ([-(h + 0.8)] if on_tab else []) + [depth, depth + p["font"] * 0.5, depth + p["font"]]   # on the tab: 0.8 mm past the hinge
         for deep in deeps:
             for along in (0.5, 0.35, 0.65, 0.22, 0.78):
                 c = A + d * (along * L) + n * (deep + h / 2)
                 b = mark_box(float(c[0]), float(c[1]), text, p["font"], rot)
-                if (sl.room.covers(b) and all(b.distance(cut) >= 0.3 for cut in sl.cuts) and all(b.distance(ln) >= 0.3 for ln in lines)
-                        and all(b.disjoint(mark_box(*m[:3], p["font"], mark_rot(m))) for m in sl.marks)):
+                if sl.room.covers(b) and free(b):
                     sl.marks.append((float(c[0]), float(c[1]), text, round(rot, 2)))
                     return
         sl.skipped.setdefault("seam number", []).append(j)
