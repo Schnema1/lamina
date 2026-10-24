@@ -325,9 +325,11 @@ def suggest_fixes(slices, p, ctx, mode):
             if "bridge thinner" in w:
                 opts = [grow, rnd(2)]
             elif "thin spot" in w and sl.group in STRUCTURAL:
+                # the trim first: one click, every part, and done — a move or a grow is a change to the model that a
+                # second click repeats, and the thin spot may still be there afterwards
                 step = max(5.0, 0.1 * max(ctx.ext))
-                opts = [fix("trim thin spots off every part", trim_thin=True),
-                        fix(f"move {sl.label} {step:.0f} mm toward the centre", offset={sl.label: round(off + toward * step, 1)}), grow]
+                opts = [fix("trim thin spots off every part", trim_thin=True), grow,
+                        fix(f"move {sl.label} {step:.0f} mm toward the centre", offset={sl.label: round(off + toward * step, 1)})]
             elif "separate island" in w:
                 opts = [rnd(3, "merges it into the body")]
                 if mode.name == "stacked" and p.get("connect") == "none":
