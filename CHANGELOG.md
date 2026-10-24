@@ -77,6 +77,13 @@ The release for the laser: every label in a single-stroke font, dowels named aft
   whatever font it had and traced as the two edges of every letter, or dropped when the font was missing. The `font`
   parameter is now the height of a capital letter in mm, so a 4 mm label has 4 mm capitals (it used to be a 4 mm
   font size, with capitals under 3 mm); the labels take a little more room beside the parts for it.
+- **The support link says what it is.** The README shows the Ko-fi button, with its logo, under the badges and again
+  in the Support section instead of a small badge at the top and a sentence at the very end. In the app the header
+  link reads "support Lamina on Ko-fi" rather than just "Ko-fi", and the note at the foot of the Model tab says you
+  can buy me a coffee there. Nothing else changes: Lamina stays free, with no account and no paid tier.
+- **The header fits on a laptop.** On a window narrower than about 1700 px the header ran past the right edge, so
+  Discord, "report a problem" and the support link were off-screen on most laptops. It now wraps onto a second row
+  when there is not enough room, and stays one row on wide screens.
 
 ### Fixed
 

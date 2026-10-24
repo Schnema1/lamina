@@ -7,13 +7,16 @@
 <script type="importmap">{"imports":{"three":"./static/vendor/three.module.js"}}</script>
 <style>
 :root{--bg:#141517;--panel:#1c1d21;--panel2:#232429;--line:#2f3138;--ink:#e6e6e3;--muted:#9a9ba3;--acc:#4f8cff;--err:#ff6b6b;--warn:#f5b642;--ok:#5fcf80;--sel:#ffd84a}
-*{box-sizing:border-box}html,body{height:100%}body{margin:0;font:13px/1.45 Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);color-scheme:dark;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
-header{height:44px;padding:0 14px;background:#0f1012;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;display:flex;flex-direction:column;font:13px/1.45 Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);color-scheme:dark;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+header{flex:none;min-height:44px;padding:0 14px;background:#0f1012;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+/* One row only fits a window about 1700px wide; narrower than that the links past the status ran off the right edge
+   on every laptop, so the header wraps onto a second row there. */
+@media (max-width:1700px){header{flex-wrap:wrap;padding:4px 14px;row-gap:4px}}
 header h1{font-size:15px;font-weight:600;letter-spacing:.01em;margin:0 6px 0 0;display:flex;align-items:center;gap:7px}header h1 img{width:20px;height:20px;display:block}
 header a.kofi{color:var(--muted);font-size:12px;text-decoration:none;border:1px solid var(--line);border-radius:12px;padding:2px 9px;white-space:nowrap}header a.kofi:hover{color:#ff5e5b;border-color:#ff5e5b}header .sp{flex:1}header select{width:auto}#status{color:var(--muted);font-size:12px;max-width:34vw;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #dot{width:11px;height:11px;border-radius:50%;background:var(--ok);flex:none;box-shadow:0 0 6px var(--ok)}#dot.busy{background:var(--warn);box-shadow:0 0 8px var(--warn);animation:pulse .8s infinite alternate}#dot.err{background:var(--err);box-shadow:0 0 6px var(--err)}
 @keyframes pulse{from{opacity:.4}to{opacity:1}}
-main{display:grid;grid-template-columns:400px 1fr;height:calc(100% - 44px)}
+main{display:grid;grid-template-columns:400px 1fr;flex:1;min-height:0}
 aside{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 nav{display:flex;border-bottom:1px solid var(--line);background:var(--panel)}nav button{flex:1;padding:9px 4px;border:0;border-bottom:2px solid transparent;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}nav button.on{color:var(--ink);border-bottom-color:var(--acc)}
 #tabs{overflow:auto;padding:12px 14px 30px;flex:1}section[data-tab]{display:none}section[data-tab].on{display:block}
@@ -92,7 +95,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:3px 6px;b
 dialog{width:min(620px,92vw);border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);padding:22px;font:14px/1.55 Inter,system-ui,sans-serif}
 /* A phone: the header wraps and the panel sits over the 3D view. Left unwrapped, the header's buttons made the page
    1560 px wide on a 390 px screen, and the phone notice was centred in that, off the edge of what the phone shows */
-@media (max-width:760px){header{height:auto;flex-wrap:wrap;padding:6px 10px;row-gap:6px}main{grid-template-columns:1fr;height:auto}
+@media (max-width:760px){header{padding:6px 10px;row-gap:6px}main{grid-template-columns:1fr;flex:none}
   aside{border-right:0;border-bottom:1px solid var(--line)}.view{height:75vh}}
 dialog::backdrop{background:#000b}dialog h3{margin:0 0 8px;font-size:18px}dialog a{color:var(--acc)}
 dialog .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
@@ -161,7 +164,7 @@ dialog button.go{background:#2563eb;border-color:transparent;color:#fff;font-wei
 <label style="font-size:12px;color:var(--muted)">units <select id="unit"><option>mm</option><option>cm</option><option>in</option></select></label>
 <a class="kofi" href="https://marcelfarres.github.io/lamina/?ref=app" target="_blank" rel="noopener" data-tip="What Lamina does, every technique explained, how to run it yourself">docs</a><a class="kofi" href="https://github.com/marcelfarres/lamina" target="_blank" rel="noopener" data-tip="Source code, issues, releases (AGPL-3.0)">GitHub</a><a class="kofi" href="https://discord.gg/N66bCQxmt3" target="_blank" rel="noopener" data-tip="Questions, ideas and builds: the Lamina Discord, where other people cutting with it can answer too">Discord</a>
 <a class="kofi" data-feedback href="https://github.com/marcelfarres/lamina/issues/new?template=bug_report.yml" target="_blank" rel="noopener" data-tip="Something came out wrong? Write a sentence here and the report fills in the rest: the technique, every setting, what the checks said, the steps you took since loading the model, and the model saved ready to attach unless you untick that box. It then opens a prefilled email or the GitHub issue form for you to send — email needs no account.">report a problem</a>
-<a class="kofi" href="https://ko-fi.com/marcelfarres" target="_blank" rel="noopener" data-tip="Lamina is free and always will be — no account, no paid tier, and none of that depends on donations. If you would like to support the work and can comfortably afford it, a coffee is very welcome. No pressure.">♥ Ko-fi</a></header>
+<a class="kofi" href="https://ko-fi.com/marcelfarres" target="_blank" rel="noopener" data-tip="Lamina is free and always will be — no account, no paid tier, and none of that depends on donations. If you would like to support the work and can comfortably afford it, a coffee is very welcome. No pressure.">♥ support Lamina on Ko-fi</a></header>
 <main>
 <aside>
   <nav><button data-t="model" class="on">Model</button><button data-t="technique">Technique</button><button data-t="sheet">Sheet &amp; fit</button><button data-t="checks">Checks</button><button data-t="export">Export</button></nav>
@@ -181,8 +184,8 @@ dialog button.go{background:#2563eb;border-color:transparent;color:#fff;font-wei
         <a data-feedback href="https://github.com/marcelfarres/lamina/issues/new?template=bug_report.yml" target="_blank" rel="noopener">tell me about it</a> —
         it takes a sentence, the report fills in the rest, and that helps more than anything. And if you would like
         to support the work and can comfortably afford it,
-        there is <a href="https://ko-fi.com/marcelfarres" target="_blank" rel="noopener">Ko-fi</a>. No pressure
-        either way.</p>
+        you can <a href="https://ko-fi.com/marcelfarres" target="_blank" rel="noopener">buy me a coffee on Ko-fi</a>.
+        No pressure either way.</p>
       <!-- Hidden unless the build carries a counter endpoint, so the self-hosted and Docker versions can never
            turn this on. On until someone unticks it, and it says exactly what it sends and how to stop it. -->
       <p id="optin" style="display:none;color:var(--muted);font-size:12px;line-height:1.6;margin:10px 0 4px">
