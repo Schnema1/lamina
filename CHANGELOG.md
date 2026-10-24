@@ -115,6 +115,10 @@ The release for the laser: every label in a single-stroke font, dowels named aft
   seam instead of being dropped, which gave the cow example 49 more tabs. The hinge of a tab is scored across its
   base only, where it used to run the whole seam under the cut line. The legend explains folds, cuts and how to read
   the numbers.
+- **The browser build tries a slice once more when its geometry engine fails.** The browser's GEOS now and then
+  reports "orientationIndex encountered NaN/Inf" on a model that slices the next time, more so with the fuller
+  cut sheets of this release: the worker now collects its garbage and runs the request again before reporting
+  an error, and every new per-part computation falls back to a safe default when the engine fails inside it.
 - **The assembly video names each part.** While the steps slider is short of the end, the 3D view carries the step
   number and the name of the part going in at the top centre, drawn into the canvas, so the recorded video shows it.
 
